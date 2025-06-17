@@ -57,8 +57,6 @@ struct SOptions {
 	string bishop = "32 55 -36 -4";
 	string defense = "11 14 11 20 -6 18 -3 13 -62 13 -46 20";
 	string king = "52 39";
-	string pawn = "3 7 -28 -26 -8 -21 -10 3";
-	string rook = "72 1 30 12";
 	string tempo = "16 8";
 
 
@@ -175,14 +173,8 @@ const int phases[] = { 0, 1, 1, 2, 4, 0 };
 int max_material[PT_NB] = {};
 int material[PT_NB] = {};
 int pawnProtection[PT_NB] = {};
-int pawnConnected = 0;
-int pawnDoubled = 0;
-int pawnIsolated = 0;
-int pawnBehind = 0;
 int bishopPair = 0;
 int bishopBad = 0;
-int rook_open = 0;
-int rook_semi_open = 0;
 int kingShield1 = 0;
 int kingShield2 = 0;
 int outsideFile[PT_NB] = {};
@@ -208,6 +200,8 @@ int PassedRank[RANK_NB] = {
 int PassedFile[FILE_NB] = {
   S(-1,  7), S(0,  9), S(-9, -8), S(-30,-14),S(-30,-14), S(-9, -8), S(0,  9), S(-1,  7)
 };
+
+int RookOnFile[] = { S(18, 7), S(44, 20) };
 
 int outpost[2][2] = {
 	{ S(22, 6), S(36,12) }, // Knight
@@ -764,12 +758,7 @@ static int Eval(Position& pos) {
 						// Rook on open or semi-open files
 						const U64 file_bb = 0x101010101010101ULL << file;
 						if (!(file_bb & pawns[0])) {
-							if (!(file_bb & pawns[1])) {
-								scores[pt][pos.flipped] += rook_open;
-							}
-							else {
-								scores[pt][pos.flipped] += rook_semi_open;
-							}
+							scores[pt][pos.flipped] += RookOnFile[!(file_bb & pawns[1])];
 						}
 					}
 					else if ((pt == KNIGHT) || (pt == BISHOP)) {
@@ -1382,32 +1371,9 @@ static void InitEval() {
 	eg = GetVal(split, 3);
 	bishopBad = S(mg, eg);
 
-	SplitInt(options.pawn, split, ' ');
-	mg = GetVal(split, 0);
-	eg = GetVal(split, 1);
-	pawnConnected = S(mg, eg);
-	mg = GetVal(split, 2);
-	eg = GetVal(split, 3);
-	pawnDoubled = S(mg, eg);
-	mg = GetVal(split, 4);
-	eg = GetVal(split, 5);
-	pawnIsolated = S(mg, eg);
-	mg = GetVal(split, 6);
-	eg = GetVal(split, 7);
-	pawnBehind = S(mg, eg);
-
 	SplitInt(options.king, split, ' ');
 	kingShield1 = GetVal(split, 0);
 	kingShield2 = GetVal(split, 1);
-
-	SplitInt(options.rook, split, ' ');
-	mg = GetVal(split, 0);
-	eg = GetVal(split, 1);
-	rook_open = S(mg, eg);
-	mg = GetVal(split, 2);
-	eg = GetVal(split, 3);
-	rook_semi_open = S(mg, eg);
-
 
 	SplitInt(options.tempo, split, ' ');
 	mg = GetVal(split, 0);
@@ -1558,9 +1524,7 @@ static void UciCommand(string str) {
 		cout << "option name threads type spin default " << options.threads << " min 1 max 256" << endl;
 		cout << "option name hash type spin default " << (options.hash >> 15) << " min 1 max 65536" << endl;
 		cout << "option name bishop type string default " << options.bishop << endl;
-		cout << "option name pawn type string default " << options.pawn << endl;
 		cout << "option name defense type string default " << options.defense << endl;
-		cout << "option name rook type string default " << options.rook << endl;
 		cout << "uciok" << endl;
 	}
 	else if (command == "setoption")
@@ -1587,12 +1551,8 @@ static void UciCommand(string str) {
 				options.bishop = value;
 			else if (name == "king")
 				options.king = value;
-			else if (name == "pawn")
-				options.pawn = value;
 			else if (name == "defense")
 				options.defense = value;
-			else if (name == "rook")
-				options.rook = value;
 		}
 	}
 	else if (command == "isready") {
