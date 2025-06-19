@@ -115,13 +115,16 @@ constexpr U64 Rank7BB = Rank1BB << (8 * 6);
 constexpr U64 Rank8BB = Rank1BB << (8 * 7);
 
 const U64 bbOutpostRanks = Rank4BB | Rank5BB | Rank6BB;
+const U64 bbLight = 0xaa55aa55aa55aa55ull;
+const U64 bbDark = 0x55aa55aa55aa55aaull;
+constexpr U64 queenSide = FileABB | FileBBB | FileCBB | FileDBB;
+constexpr U64 centerFiles = FileCBB | FileDBB | FileEBB | FileFBB;
+constexpr U64 kingSide = FileEBB | FileFBB | FileGBB | FileHBB;
+constexpr U64 center = (FileDBB | FileEBB) & (Rank4BB | Rank5BB);
 
 enum File : int { FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H, FILE_NB };
 
 enum Rank : int { RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8, RANK_NB };
-
-const U64 bbLight = 0xaa55aa55aa55aa55ull;
-const U64 bbDark = 0x55aa55aa55aa55aaull;
 
 static S64 Now() {
 	return (clock() * 1000) / CLOCKS_PER_SEC;
@@ -186,6 +189,7 @@ int contempt = 0;
 
 // Connected pawn bonus by opposed, phalanx, #support and rank
 int Connected[2][2][3][RANK_NB];
+int BishopPawns = S(3, 8);
 
 int Backward = S(9, 24);
 int Doubled = S(11, 56);
@@ -690,7 +694,6 @@ static int Eval(Position& pos) {
 			auto copy = pos.color[0] & pos.pieces[pt];
 			while (copy) {
 				phase += phases[pt];
-
 				const int sq = lsb(copy);
 				copy &= copy - 1;
 				const int rank = sq / 8;
@@ -722,8 +725,8 @@ static int Eval(Position& pos) {
 					if (bbPiece & bbConnected) {
 						U64 bbSupported = South(bbPiece);
 						int opposed = bbForward & pawns[1] ? 1 : 0;
-						int phalanx = (East( bbPiece) | West(bbPiece)) & pawns[0] ? 1 : 0;
-						int supported = bool(pawns[0] & East(bbSupported)) + bool(pawns[0] & West( bbSupported));
+						int phalanx = (East(bbPiece) | West(bbPiece)) & pawns[0] ? 1 : 0;
+						int supported = bool(pawns[0] & East(bbSupported)) + bool(pawns[0] & West(bbSupported));
 						structure += Connected[opposed][phalanx][supported][rank];
 					}
 					else {
@@ -769,6 +772,10 @@ static int Eval(Position& pos) {
 							U64 bb = bbMoves & bbOutpost & ~pos.color[0];
 							if (bb)
 								scores[pt][pos.flipped] += outpost[pt == BISHOP][bbDefense && bb];
+						}
+						if (pt == BISHOP) {
+							U64 blocked = pawns[0] & South(bbAll);
+							scores[pt][pos.flipped] -= BishopPawns * count(pawns[0] & (bbPiece && bbLight ? bbLight : bbDark)) * (1 + count(blocked & centerFiles));
 						}
 					}
 				}
