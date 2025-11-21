@@ -22,7 +22,7 @@ struct SOptions {
 	int elo = 2500;
 	int eloMin = 0;
 	int eloMax = 2500;
-	U64 hash = 64ULL << 15;
+	U64 ttSize = 64ULL << 15;
 	string tempo = "16 8";
 }options;
 
@@ -376,16 +376,17 @@ const auto keys = []() {
 	}();
 
 // Engine options
-auto num_tt_entries = 64ULL << 15;  // The first value is the size in megabytes
-auto thread_count = 1;
-// Possible tournament settings (4095 bytes exe)
-// auto num_tt_entries = 1ULL << 30;  // 32 GB
-// auto thread_count = 52;
-
+U64 num_tt_entries = 64ULL << 15;  // The first value is the size in megabytes
 vector<TT_Entry> transposition_table;	
 
 void TranspositionClear() {
 	memset(transposition_table.data(), 0, sizeof(TT_Entry) * transposition_table.size());
+}
+
+void InitTranspositionTable() {
+	num_tt_entries = options.ttSize / sizeof(TT_Entry);
+	transposition_table.resize(num_tt_entries);
+	TranspositionClear();
 }
 
 // less significant bit
@@ -1691,40 +1692,25 @@ static void PrintTerm(string name, int idx) {
 	std::cout << ShowScore(name) << ShowScore(sw) << " " << ShowScore(sb) << " " << ShowScore(sw - sb) << endl;
 }
 
-// Function to put thousands separators in the given integer
+//function to put thousands separators in the given integer
 string ThousandSeparator(uint64_t n){
 	string ans = "";
 	string num = to_string(n);
 	int count = 0;
-
-	// Traverse the string in reverse
 	for (int i = (int)num.size() - 1; i >= 0; i--) {
 		ans.push_back(num[i]);
-
-		// If three characters
-		// are traversed
 		if (++count == 3) {
 			ans.push_back(' ');
 			count = 0;
 		}
 	}
-
-	// Reverse the string to get
-	// the desired output
 	reverse(ans.begin(), ans.end());
-
-	// If the given string is
-	// less than 1000
-	if (ans.size() % 4 == 0) {
-
-		// Remove ','
+	if (ans.size() % 4 == 0) 
 		ans.erase(ans.begin());
-	}
-
 	return ans;
 }
 
-//Displays a summary
+//displays a summary
 static void PrintSummary(U64 time, U64 nodes) {
 	if (time < 1)
 		time = 1;
@@ -1746,7 +1732,7 @@ static void ResetLimit()
 	info.timeStart = GetTimeMs();
 }
 
-//Performance test
+//performance test
 static inline void PerftDriver(Position& pos, int depth) {
 	if (!depth)
 	{
@@ -1817,7 +1803,7 @@ static void UciCommand(string str) {
 	{
 		cout << "id name " << NAME << endl;
 		cout << "option name UCI_Elo type spin default " << options.eloMax << " min " << options.eloMin << " max " << options.eloMax << endl;
-		cout << "option name hash type spin default " << (options.hash >> 15) << " min 1 max 1000" << endl;
+		cout << "option name hash type spin default " << (options.ttSize >> 15) << " min 1 max 1000" << endl;
 		cout << "uciok" << endl;
 	}
 	else if (command == "setoption")
@@ -1831,9 +1817,9 @@ static void UciCommand(string str) {
 				EvalInit();
 			}
 			else if (name == "hash") {
-				options.hash = stoi(value);
-				options.hash = min(max(options.hash, 1ULL),1000ULL) * 1000000;
-				transposition_table.resize(options.hash / sizeof(TT_Entry));
+				options.ttSize = stoi(value);
+				options.ttSize = min(max(options.ttSize, 1ULL),1000ULL) * 1000000;
+				InitTranspositionTable();
 			}
 		}
 	}
@@ -1937,6 +1923,6 @@ static void UciLoop() {
 int main(const int argc, const char** argv) {
 	cout << NAME << " " << DATE << endl;
 	EvalInit();
-	transposition_table.resize(options.hash / sizeof(TT_Entry));
+	InitTranspositionTable();
 	UciLoop();
 }
