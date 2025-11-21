@@ -22,7 +22,7 @@ struct SOptions {
 	int elo = 2500;
 	int eloMin = 0;
 	int eloMax = 2500;
-	U64 ttSize = 64ULL << 15;
+	int ttMb = 64;
 	string tempo = "16 8";
 }options;
 
@@ -377,14 +377,14 @@ const auto keys = []() {
 
 // Engine options
 U64 num_tt_entries = 64ULL << 15;  // The first value is the size in megabytes
-vector<TT_Entry> transposition_table;	
+vector<TT_Entry> transposition_table;
 
 void TranspositionClear() {
 	memset(transposition_table.data(), 0, sizeof(TT_Entry) * transposition_table.size());
 }
 
 void InitTranspositionTable() {
-	num_tt_entries = options.ttSize / sizeof(TT_Entry);
+	num_tt_entries = (options.ttMb * 1000000) / sizeof(TT_Entry);
 	transposition_table.resize(num_tt_entries);
 	TranspositionClear();
 }
@@ -1693,7 +1693,7 @@ static void PrintTerm(string name, int idx) {
 }
 
 //function to put thousands separators in the given integer
-string ThousandSeparator(uint64_t n){
+string ThousandSeparator(uint64_t n) {
 	string ans = "";
 	string num = to_string(n);
 	int count = 0;
@@ -1705,7 +1705,7 @@ string ThousandSeparator(uint64_t n){
 		}
 	}
 	reverse(ans.begin(), ans.end());
-	if (ans.size() % 4 == 0) 
+	if (ans.size() % 4 == 0)
 		ans.erase(ans.begin());
 	return ans;
 }
@@ -1803,7 +1803,7 @@ static void UciCommand(string str) {
 	{
 		cout << "id name " << NAME << endl;
 		cout << "option name UCI_Elo type spin default " << options.eloMax << " min " << options.eloMin << " max " << options.eloMax << endl;
-		cout << "option name hash type spin default " << (options.ttSize >> 15) << " min 1 max 1000" << endl;
+		cout << "option name hash type spin default " << options.ttMb << " min 1 max 1000" << endl;
 		cout << "uciok" << endl;
 	}
 	else if (command == "setoption")
@@ -1817,8 +1817,7 @@ static void UciCommand(string str) {
 				EvalInit();
 			}
 			else if (name == "hash") {
-				options.ttSize = stoi(value);
-				options.ttSize = min(max(options.ttSize, 1ULL),1000ULL) * 1000000;
+				options.ttMb = stoi(value);
 				InitTranspositionTable();
 			}
 		}
