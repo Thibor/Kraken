@@ -13,3 +13,14 @@
     <img src="https://img.shields.io/github/v/release/Thibor/Kraken?color=blue&label=Latest%20release&style=for-the-badge">
     <img src="https://img.shields.io/github/last-commit/Thibor/Kraken?color=critical&style=for-the-badge">
 </div>
+
+## Features
+
+- [x] Alpha beta pruning<br>
+- [x] Quiescence search<br>
+- [x] Transposition table<br>
+- [x] Bitboard<br>
+- [x] Mate distance pruning<br>
+- [x] Null move pruning<br>
+- [x] Futility pruning<br>
+- [x] Razoring<br>

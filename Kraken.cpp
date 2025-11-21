@@ -382,11 +382,7 @@ auto thread_count = 1;
 // auto num_tt_entries = 1ULL << 30;  // 32 GB
 // auto thread_count = 52;
 
-vector<TT_Entry> transposition_table;
-
-static void PrintWelcome() {
-	cout << NAME << " " << DATE << endl;
-}
+vector<TT_Entry> transposition_table;	
 
 void TranspositionClear() {
 	memset(transposition_table.data(), 0, sizeof(TT_Entry) * transposition_table.size());
@@ -1565,7 +1561,7 @@ static int GetVal(vector<int> v, int i) {
 	return 0;
 }
 
-static void Init() {
+static void EvalInit() {
 	for (int f = FILE_A; f <= FILE_H; ++f)
 		bbAdjacentFiles[f] = (f > FILE_A ? MASK_FILE[f - 1] : 0) | (f < FILE_H ? MASK_FILE[f + 1] : 0);
 	for (int r = RANK_1; r <= RANK_8; ++r)
@@ -1695,17 +1691,10 @@ static void PrintTerm(string name, int idx) {
 	std::cout << ShowScore(name) << ShowScore(sw) << " " << ShowScore(sb) << " " << ShowScore(sw - sb) << endl;
 }
 
-// Function to put thousands
-// separators in the given integer
-string ThousandSeparator(uint64_t n)
-{
+// Function to put thousands separators in the given integer
+string ThousandSeparator(uint64_t n){
 	string ans = "";
-
-	// Convert the given integer
-	// to equivalent string
 	string num = to_string(n);
-
-	// Initialise count
 	int count = 0;
 
 	// Traverse the string in reverse
@@ -1828,7 +1817,7 @@ static void UciCommand(string str) {
 	{
 		cout << "id name " << NAME << endl;
 		cout << "option name UCI_Elo type spin default " << options.eloMax << " min " << options.eloMin << " max " << options.eloMax << endl;
-		cout << "option name hash type spin default " << (options.hash >> 15) << " min 1 max 65536" << endl;
+		cout << "option name hash type spin default " << (options.hash >> 15) << " min 1 max 1000" << endl;
 		cout << "uciok" << endl;
 	}
 	else if (command == "setoption")
@@ -1839,12 +1828,12 @@ static void UciCommand(string str) {
 			name = StrToLower(name);
 			if (name == "uci_elo") {
 				options.elo = stoi(value);
-				Init();
+				EvalInit();
 			}
 			else if (name == "hash") {
 				options.hash = stoi(value);
-				options.hash = min(max(options.hash, 1ULL), 65536ULL) * 1024 * 1024 / sizeof(TT_Entry);
-				transposition_table.resize(options.hash);
+				options.hash = min(max(options.hash, 1ULL),1000ULL) * 1000000;
+				transposition_table.resize(options.hash / sizeof(TT_Entry));
 			}
 		}
 	}
@@ -1946,11 +1935,8 @@ static void UciLoop() {
 }
 
 int main(const int argc, const char** argv) {
-	PrintWelcome();
-	Init();
-	transposition_table.resize(options.hash);
-	//UciCommand("position startpos moves c2c4 e7e5 b1c3 g8f6 g1f3 b8c6 e2e3 f8b4 d2d4 e5d4 e3d4 e8g8 f1e2 d7d5 e1g1 d5c4 e2c4 c8g4 a2a3 g4f3 d1f3 d8d4 a3b4 d4c4 b4b5 c6d8 a1a4 c4b3 f1d1 f8e8 c1g5 f6d7 g5d8 a8d8 f3d3 d7f8 d3d8 e8d8 d1d8 b3b2 c3d1 b2f6 d8a8 f6e5 d1e3 e5b5 a4a7 b5b1 e3f1 b1b6 f1e3 f7f6 h2h3 g8f7 e3d5 b6b1 g1h2 f8e6 d5c7 e6f4 c7e8 f7g6 a7a4 f4e2 a4a1 b1f5 f2f3 f5e5 h2h1 e2g3 h1h2 b7b5 a1a7 g3e2 h2h1 g6h6 a7d7 b5b4 d7d1 b4b3 e8d6 e2g3 h1g1 e5e2 d6f7 h6g6 f7h8 g6h5 a8d8 b3b2 d8d5 f6f5 h3h4 h5h4 d5d4 f5f4 d4f4 h4h5 f4d4 e2e3 g1h2 b2b1q d4d5 b1f5 h2g3 e3g5 g3f2 f5c2 f2e1 c2d1 d5d1 g5e3 e1f1 e3e8 d1d5 g7g5 d5d4 e8h8 d4e4 h5g6 f1e1 h7h5 e1f1 h5h4 f1e1 h8c3 e1f2 c3c5 f2f1 g6f5 e4g4 c5c1 f1f2 c1d2 f2f1 d2d3 f1f2 d3c2 f2f1 c2c3 f1e2 c3b2 e2f1 b2a3 f1e2 a3a2 e2f1 a2b3 f1e2 b3b5 e2f2 b5e5 f2f1 e5e3 g4e4 e3c1 f1f2 c1b2 f2g1 b2c3 g1f2 c3c5 f2f1 c5b5 f1e1 b5d3 e1f2 d3d6 f2f1 d6a6 f1e1 a6b6 e1f1 b6b1 f1f2 b1c2 f2f1 c2c7 f1e2 c7g3 e4g4 g3h2 e2f1 h2c7 f1e2 f5f6 g4e4 c7g3 e4g4 g3e5 g4e4 e5b2 e2f1 b2c1 f1f2 c1c5 f2f1 c5b5 f1e1 b5b1 e1f2 b1c2 f2g1 c2d1 g1f2 d1d2 f2f1 f6g6 f1g1 d2c1 g1f2 g6h5 e4g4 c1d2 f2f1 d2c3 f1f2 c3b2 f2f1 h4h3 g2h3 b2h2 f1e1 h2h3 e1e2 h3h2 e2e3 h5g6 g4c4 h2e5 e3f2 g6f5 c4g4 e5h2 f2f1 h2d2 g4e4 d2b2 f1g1 b2c1 g1g2 c1c6 g2f2 c6c2 f2g1 c2b2 g1f1 b2d2 f1g1 d2d1 g1f2 d1b3 f2g2 b3b8 g2h3 b8b2 h3g3 b2c2 e4e8 c2c7 g3g2 c7d6 e8e4 d6d3 g2f2 f5f6 f2g2 d3d2 g2g1 d2c2 g1f1 c2h2 e4g4 h2a2 g4e4 f6f5 f1g1 a2a3 g1f2 a3c5 f2g2 c5c3 g2f2 c3d3 f2g2 d3b1 e4e2 b1b7 g2g3 b7a6 e2d2 a6c4 g3f2 c4c5 f2g2 c5e5 d2d7 e5e2 g2g3 e2e3 g3g2 f5e6");
-	//UciCommand("go wtime 1 btime 9146 winc 0 binc 0");
-	//UciCommand("go movetime 3000");
+	cout << NAME << " " << DATE << endl;
+	EvalInit();
+	transposition_table.resize(options.hash / sizeof(TT_Entry));
 	UciLoop();
 }
