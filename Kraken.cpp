@@ -1,20 +1,12 @@
 
-//#include <bit>
 #include <iostream>
 #include <random>
-#include <thread>
 #include <array>
-#include <string>
-#include <cstring>
-#include <cstdint>
 #include <cstdio>
-#include <ctime>
 #include <vector>
 #include <sstream> 
-#include<nmmintrin.h>
-
-#include <algorithm>
-#include <chrono>
+#include <windows.h>
+using namespace std;
 
 #define MATE_SCORE (1 << 15)
 #define MAX_DEPTH 128
@@ -23,48 +15,24 @@
 #define U64 unsigned __int64
 #define U16 unsigned __int16
 #define NAME "Kraken"
-
-using namespace std;
-
-#define MONTH (\
-  __DATE__ [2] == 'n' ? (__DATE__ [1] == 'a' ? "01" : "06") \
-: __DATE__ [2] == 'b' ? "02" \
-: __DATE__ [2] == 'r' ? (__DATE__ [0] == 'M' ? "03" : "04") \
-: __DATE__ [2] == 'y' ? "05" \
-: __DATE__ [2] == 'l' ? "07" \
-: __DATE__ [2] == 'g' ? "08" \
-: __DATE__ [2] == 'p' ? "09" \
-: __DATE__ [2] == 't' ? "10" \
-: __DATE__ [2] == 'v' ? "11" \
-: "12")
-#define DAY (std::string(1,(__DATE__[4] == ' ' ?  '0' : (__DATE__[4]))) + (__DATE__[5]))
-#define YEAR ((__DATE__[7]-'0') * 1000 + (__DATE__[8]-'0') * 100 + (__DATE__[9]-'0') * 10 + (__DATE__[10]-'0') * 1)
-
-string defFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -";
-string tstFen = "1k6/1pp1R1p1/4P3/4b1P1/5p2/3q4/1P2R1PK/8 b - - 0 1";
-
-static void PrintWelcome() {
-	cout << NAME << " " << YEAR << "-" << MONTH << "-" << DAY << endl;
-}
+#define DATE "2025-07-27"
+#define DEFAULT_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 struct SOptions {
 	int elo = 2500;
 	int eloMin = 0;
 	int eloMax = 2500;
-	int threads = 1;
 	U64 hash = 64ULL << 15;
-
-	string bishop = "32 55 -36 -4";
-	string defense = "11 14 11 20 -6 18 -3 13 -62 13 -46 20";
-	string king = "52 39";
 	string tempo = "16 8";
-
-
-};
+}options;
 
 enum Term { PASSED = 6, STRUCTURE, TERM_NB };
 
 int scores[TERM_NB][2];
+
+enum {
+	exact, lowerbound, upperbound
+};
 
 enum PieceType
 {
@@ -81,6 +49,20 @@ enum Phase {
 	MG = 0, EG = 1, PHASE_NB = 2
 };
 
+enum Square : int {
+	SQ_A1, SQ_B1, SQ_C1, SQ_D1, SQ_E1, SQ_F1, SQ_G1, SQ_H1,
+	SQ_A2, SQ_B2, SQ_C2, SQ_D2, SQ_E2, SQ_F2, SQ_G2, SQ_H2,
+	SQ_A3, SQ_B3, SQ_C3, SQ_D3, SQ_E3, SQ_F3, SQ_G3, SQ_H3,
+	SQ_A4, SQ_B4, SQ_C4, SQ_D4, SQ_E4, SQ_F4, SQ_G4, SQ_H4,
+	SQ_A5, SQ_B5, SQ_C5, SQ_D5, SQ_E5, SQ_F5, SQ_G5, SQ_H5,
+	SQ_A6, SQ_B6, SQ_C6, SQ_D6, SQ_E6, SQ_F6, SQ_G6, SQ_H6,
+	SQ_A7, SQ_B7, SQ_C7, SQ_D7, SQ_E7, SQ_F7, SQ_G7, SQ_H7,
+	SQ_A8, SQ_B8, SQ_C8, SQ_D8, SQ_E8, SQ_F8, SQ_G8, SQ_H8,
+	SQ_NONE,
+
+	SQUARE_NB = 64
+};
+
 enum Value :int {
 	VALUE_ZERO = 0,
 	PawnValueMg = 136, PawnValueEg = 208,
@@ -89,6 +71,11 @@ enum Value :int {
 	RookValueMg = 1289, RookValueEg = 1378,
 	QueenValueMg = 2529, QueenValueEg = 2687
 };
+
+constexpr Value operator+(Value v, int i) { return Value(int(v) + i); }
+constexpr Value operator-(Value v, int i) { return Value(int(v) - i); }
+inline Value& operator+=(Value& v, int i) { return v = v + i; }
+inline Value& operator-=(Value& v, int i) { return v = v - i; }
 
 int PieceValue[PHASE_NB][PT_NB] = {
   { PawnValueMg, KnightValueMg, BishopValueMg, RookValueMg, QueenValueMg },
@@ -115,8 +102,8 @@ constexpr U64 Rank7BB = Rank1BB << (8 * 6);
 constexpr U64 Rank8BB = Rank1BB << (8 * 7);
 
 const U64 bbOutpostRanks = Rank4BB | Rank5BB | Rank6BB;
-const U64 bbLight = 0xaa55aa55aa55aa55ull;
 const U64 bbDark = 0x55aa55aa55aa55aaull;
+const U64 bbLight = 0xaa55aa55aa55aa55ull;
 constexpr U64 queenSide = FileABB | FileBBB | FileCBB | FileDBB;
 constexpr U64 centerFiles = FileCBB | FileDBB | FileEBB | FileFBB;
 constexpr U64 kingSide = FileEBB | FileFBB | FileGBB | FileHBB;
@@ -124,10 +111,29 @@ constexpr U64 center = (FileDBB | FileEBB) & (Rank4BB | Rank5BB);
 
 enum File : int { FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H, FILE_NB };
 
+static constexpr File operator++(File& f) { return f = File(int(f) + 1); }
+
+static constexpr File operator~(File& f) {
+	return File(f ^ FILE_H); // Horizontal flip FILE_A -> FILE_H
+}
+
 enum Rank : int { RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8, RANK_NB };
 
-static S64 Now() {
-	return (clock() * 1000) / CLOCKS_PER_SEC;
+const U64 MASK_FILE[8] = {
+	0x101010101010101, 0x202020202020202, 0x404040404040404, 0x808080808080808,
+	0x1010101010101010, 0x2020202020202020, 0x4040404040404040, 0x8080808080808080
+};
+
+U64 bbDistanceRing[64][8];
+
+inline static S64 SqToBb(int sq) {
+	if (sq < 0 || sq > 63)
+		return 0;
+	return 1ULL << sq;
+}
+
+static U64 GetTimeMs() {
+	return GetTickCount64();
 }
 
 struct Position {
@@ -140,14 +146,27 @@ struct Position {
 							0x800000000000008ULL,
 							0x1000000000000010ULL };
 	U64 ep = 0x0ULL;
-	int flipped = false;
-};
+	bool flipped = false;
+}pos;
+
+struct SearchInfo {
+	bool stop = false;
+	int depthLimit = MAX_DEPTH;
+	S64 timeStart = 0;
+	S64 timeLimit = 0;
+	U64 nodes = 0;
+	U64 nodesLimit = 0;
+}info;
 
 struct Move {
 	int from = 0;
 	int to = 0;
 	int promo = 0;
 };
+
+auto operator==(const Move& lhs, const Move& rhs) {
+	return !memcmp(&rhs, &lhs, sizeof(Move));
+}
 
 const Move no_move{};
 
@@ -175,11 +194,6 @@ static int S(const int mg, const int eg) {
 const int phases[] = { 0, 1, 1, 2, 4, 0 };
 int max_material[PT_NB] = {};
 int material[PT_NB] = {};
-int pawnProtection[PT_NB] = {};
-int bishopPair = 0;
-int bishopBad = 0;
-int kingShield1 = 0;
-int kingShield2 = 0;
 int outsideFile[PT_NB] = {};
 int outsideRank[PT_NB] = {};
 int bonus[PT_NB][RANK_NB][FILE_NB] = {};
@@ -190,6 +204,7 @@ int contempt = 0;
 // Connected pawn bonus by opposed, phalanx, #support and rank
 int Connected[2][2][3][RANK_NB];
 int BishopPawns = S(3, 8);
+int LongDiagonalBishop = S(44, 0);
 
 int Backward = S(9, 24);
 int Doubled = S(11, 56);
@@ -293,8 +308,58 @@ int MobilityBonus[][32] = {
 	S(106,184), S(109,191), S(113,206), S(116,212) }
 };
 
-SOptions options;
-Position pos;
+#define V Value
+
+// Strength of pawn shelter for our king by [distance from edge][rank].
+// RANK_1 = 0 is used for files where we have no pawn, or pawn is behind our king.
+constexpr Value ShelterStrength[int(FILE_NB) / 2][RANK_NB] = {
+  { V(-6), V(81), V(93), V(58), V(39), V(18), V(25) },
+  { V(-43), V(61), V(35), V(-49), V(-29), V(-11), V(-63) },
+  { V(-10), V(75), V(23), V(-2), V(32), V(3), V(-45) },
+  { V(-39), V(-13), V(-29), V(-52), V(-48), V(-67), V(-166) }
+};
+
+// Danger of enemy pawns moving toward our king by [distance from edge][rank].
+// RANK_1 = 0 is used for files where the enemy has no pawn, or their pawn
+// is behind our king.
+constexpr Value UnblockedStorm[int(FILE_NB) / 2][RANK_NB] = {
+  { V(89), V(107), V(123), V(93), V(57), V(45), V(51) },
+  { V(44), V(-18), V(123), V(46), V(39), V(-7), V(23) },
+  { V(4), V(52), V(162), V(37), V(7), V(-14), V(-2) },
+  { V(-10), V(-14), V(90), V(15), V(2), V(-7), V(-16) }
+};
+
+#undef V
+
+// Polynomial material imbalance parameters
+
+constexpr int QuadraticOurs[][6] = {
+	//            OUR PIECES
+	// pair pawn knight bishop rook queen
+	{1438                               }, // Bishop pair
+	{  40,   38                         }, // Pawn
+	{  32,  255, -62                    }, // Knight      OUR PIECES
+	{   0,  104,   4,    0              }, // Bishop
+	{ -26,   -2,  47,   105,  -208      }, // Rook
+	{-189,   24, 117,   133,  -134, -6  }  // Queen
+};
+
+constexpr int QuadraticTheirs[][6] = {
+	//           THEIR PIECES
+	// pair pawn knight bishop rook queen
+	{   0                               }, // Bishop pair
+	{  36,    0                         }, // Pawn
+	{   9,   63,   0                    }, // Knight      OUR PIECES
+	{  59,   65,  42,     0             }, // Bishop
+	{  46,   39,  24,   -24,    0       }, // Rook
+	{  97,  100, -42,   137,  268,    0 }  // Queen
+};
+
+U64 bbAdjacentFiles[FILE_NB];
+U64 bbRanks[RANK_NB];
+U64 bbFiles[FILE_NB];
+U64 bbForwardRanks[RANK_NB];
+
 vector<U64> hash_history;
 
 const auto keys = []() {
@@ -319,28 +384,42 @@ auto thread_count = 1;
 
 vector<TT_Entry> transposition_table;
 
-static U64 flip(const U64 bb) {
-	//return __builtin_bswap64(bb);
+static void PrintWelcome() {
+	cout << NAME << " " << DATE << endl;
+}
+
+void TranspositionClear() {
+	memset(transposition_table.data(), 0, sizeof(TT_Entry) * transposition_table.size());
+}
+
+// less significant bit
+inline static Square lsb(U64 b) {
+	unsigned long idx;
+	_BitScanForward64(&idx, b);
+	return (Square)idx;
+}
+
+// most significant bit
+inline static Square msb(U64 b) {
+	unsigned long idx;
+	_BitScanReverse64(&idx, b);
+	return (Square)idx;
+}
+
+static U64 FlipBitboard(const U64 bb) {
 	return _byteswap_uint64(bb);
 }
 
-static U64 lsb(const U64 bb) {
-	//return __builtin_ctzll(bb);
-	return _tzcnt_u64(bb);
-}
-
-static U64 count(const U64 bb) {
-	//return __builtin_popcountll(bb);
-	return _mm_popcnt_u64(bb);
-	//return popcount(bb);
+static int Popcount(const U64 bb) {
+	return __popcnt(bb);
 }
 
 static U64 East(const U64 bb) {
-	return (bb << 1) & ~0x0101010101010101ULL;
+	return (bb << 1) & 0xfefefefefefefefe;
 }
 
 static U64 West(const U64 bb) {
-	return (bb >> 1) & ~0x8080808080808080ULL;
+	return (bb >> 1) & 0x7f7f7f7f7f7f7f7f;
 }
 
 static U64 North(const U64 bb) {
@@ -351,46 +430,34 @@ static U64 South(const U64 bb) {
 	return bb >> 8;
 }
 
+static U64 ss(const U64 bb) {
+	return bb >> 16;
+}
+
 static U64 nw(const U64 bb) {
-	return North(West(bb));
+	return (bb << 7) & 0x7f7f7f7f7f7f7f7f;
 }
 
 static U64 ne(const U64 bb) {
-	return North(East(bb));
+	return (bb << 9) & 0xfefefefefefefefe;
 }
 
 static U64 sw(const U64 bb) {
-	return South(West(bb));
+	return (bb >> 9) & 0x7f7f7f7f7f7f7f7f;
 }
 
 static U64 se(const U64 bb) {
-	return South(East(bb));
+	return (bb >> 7) & 0xfefefefefefefefe;
 }
 
-auto operator==(const Move& lhs, const Move& rhs) {
-	return !memcmp(&rhs, &lhs, sizeof(Move));
-}
+static constexpr Rank RankOf(Square sq) { return Rank(sq >> 3); }
+static constexpr File FileOf(Square sq) { return File(sq & 0b111); }
 
-static inline int CenterFile(int file) {
-	return 3 - abs(file * 2 - 7) / 2;
-}
-
-static inline int CenterRank(int rank) {
-	return 3 - abs(rank * 2 - 7) / 2;
-}
-
-static inline int Center(int rank, int file) {
-	return 6 - abs(rank * 2 - 7) / 2 - abs(file * 2 - 7) / 2;
-}
-
-static constexpr Rank RankOf(int s) { return Rank(s >> 3); }
-static constexpr File FileOf(int s) { return File(s & 0b111); }
-
-static int Distance(int sq1, int sq2) {
-	return max(abs(FileOf(sq1) - FileOf(sq2)), abs(RankOf(sq1) - RankOf(sq2))) - 4;
+static int Distance(Square sq1, Square sq2) {
+	return max(abs(FileOf(sq1) - FileOf(sq2)), abs(RankOf(sq1) - RankOf(sq2)));
 };
 
-static int KingDistance(int sq1, int sq2) {
+static int KingDistance(Square sq1, Square sq2) {
 	return min(Distance(sq1, sq2), 5);
 }
 
@@ -410,6 +477,10 @@ static int ValueToCp(int v) {
 	return (v * 100) / PawnValueEg;
 }
 
+static bool MoreThanOne(U64 b) {
+	return b & (b - 1);
+}
+
 static string SquareToUci(const int sq, const int flip) {
 	string str;
 	str += 'a' + (sq % 8);
@@ -418,11 +489,8 @@ static string SquareToUci(const int sq, const int flip) {
 }
 
 static auto MoveToUci(const Move& move, const int flip) {
-	string str;
-	str += 'a' + (move.from % 8);
-	str += '1' + (flip ? (7 - move.from / 8) : (move.from / 8));
-	str += 'a' + (move.to % 8);
-	str += '1' + (flip ? (7 - move.to / 8) : (move.to / 8));
+	string str = SquareToUci(move.from, flip);
+	str += SquareToUci(move.to, flip);
 	if (move.promo != PT_NB) {
 		str += "\0nbrq\0\0"[move.promo];
 	}
@@ -440,12 +508,12 @@ static int PieceTypeOn(const Position& pos, const int sq) {
 }
 
 static void flip(Position& pos) {
-	pos.color[0] = flip(pos.color[0]);
-	pos.color[1] = flip(pos.color[1]);
+	pos.color[0] = FlipBitboard(pos.color[0]);
+	pos.color[1] = FlipBitboard(pos.color[1]);
 	for (int i = 0; i < 6; ++i) {
-		pos.pieces[i] = flip(pos.pieces[i]);
+		pos.pieces[i] = FlipBitboard(pos.pieces[i]);
 	}
-	pos.ep = flip(pos.ep);
+	pos.ep = FlipBitboard(pos.ep);
 	swap(pos.color[0], pos.color[1]);
 	swap(pos.castling[0], pos.castling[2]);
 	swap(pos.castling[1], pos.castling[3]);
@@ -644,6 +712,29 @@ static void PrintBoard(Position& pos) {
 		flip(pos);
 }
 
+static void PrintBitboard(U64 bb) {
+	const char* s = "   +---+---+---+---+---+---+---+---+\n";
+	const char* t = "     A   B   C   D   E   F   G   H\n";
+	cout << t;
+	for (int i = 56; i >= 0; i -= 8) {
+		cout << s << " " << i / 8 + 1 << " ";
+		for (int j = 0; j < 8; j++) {
+			int sq = i + j;
+			U64 bbSq = 1ull << sq;
+			if (bb & bbSq) {
+				cout << "| X ";
+			}
+			else
+			{
+				cout << "|   ";
+			}
+		}
+		cout << "| " << i / 8 + 1 << endl;
+	}
+	cout << s;
+	cout << t << endl;
+}
+
 static int TotalScore(int c) {
 	int score = 0;
 	for (int n = 0; n < TERM_NB; n++)
@@ -653,6 +744,10 @@ static int TotalScore(int c) {
 
 U64 Span(U64 bb) {
 	return bb | bb >> 8 | bb >> 16 | bb >> 24 | bb >> 32;
+}
+
+U64 SpanNorth(U64 bb) {
+	return bb | bb << 8 | bb << 16 | bb << 24 | bb << 32;
 }
 
 static constexpr U64 Attacks(int pt, int sq, U64 blockers) {
@@ -672,133 +767,170 @@ static constexpr U64 Attacks(int pt, int sq, U64 blockers) {
 	}
 }
 
+static int Imbalance(int us, const int pieceCount[][6]) {
+	int en = us ? 0 : 1;
+	int bonus = 0;
+	for (int pt1 = 0; pt1 < 6; ++pt1)
+	{
+		if (!pieceCount[us][pt1])
+			continue;
+		int v = 0;
+		for (int pt2 = 0; pt2 <= pt1; ++pt2)
+			v += QuadraticOurs[pt1][pt2] * pieceCount[us][pt2]
+			+ QuadraticTheirs[pt1][pt2] * pieceCount[en][pt2];
+
+		bonus += pieceCount[us][pt1] * v;
+	}
+	return bonus;
+}
+
+static Value EvalShelter(Position& pos, Square ksq) {
+	U64 bb = pos.pieces[PAWN] & bbForwardRanks[RankOf(ksq)];
+	const U64 bbPawnsUs = bb & pos.color[0];
+	const U64 bbPawnsEn = bb & pos.color[1];
+	File center = max(FILE_B, min(FILE_G, FileOf(ksq)));
+	Value safety = (South(bbPawnsEn) & (FileABB | FileHBB) & (Rank1BB | Rank2BB) & ksq) ? Value(374) : Value(5);
+	for (File f = File(center - 1); f <= File(center + 1); ++f)
+	{
+		bb = bbPawnsUs & bbFiles[f];
+		int rankUs = bb ? RankOf(lsb(bb)) : 0;
+
+		bb = bbPawnsEn & bbFiles[f];
+		int rankEn = bb ? RankOf(lsb(bb)) : 0;
+
+		int d = min(f, ~f);
+		safety += ShelterStrength[d][rankUs];
+		safety -= (rankUs && (rankUs == rankEn - 1)) ? 66 * (rankEn == RANK_3) : UnblockedStorm[d][rankEn];
+	}
+	return safety;
+}
+
+static Value KingSafety(Position& pos, Square ksq) {
+	Value bonus = EvalShelter(pos, ksq);
+	if (pos.castling[0])
+		bonus = max(bonus, EvalShelter(pos, SQ_G1));
+	if (pos.castling[1])
+		bonus = max(bonus, EvalShelter(pos, SQ_C1));
+	return bonus;
+}
+
 static int Eval(Position& pos) {
 	std::memset(scores, 0, sizeof(scores));
 	int score = tempo;
+	int ptCount[2][6] = {};
 	phase = 0;
-	U64 bbAll = pos.color[0] | pos.color[1];
 	for (int c = 0; c < 2; ++c) {
-		const U64 pawns[] = { pos.color[0] & pos.pieces[PAWN], pos.color[1] & pos.pieces[PAWN] };
-		const U64 bbDefense = nw(pawns[0]) | ne(pawns[0]);
-		const U64 bbAttack = se(pawns[1]) | sw(pawns[1]);
-		const U64 bbSpan = Span(bbAttack);
+		U64 bbAll = pos.color[0] | pos.color[1];
+		const U64 bbPawnsUs = pos.color[0] & pos.pieces[PAWN];
+		const U64 bbPawnsEn = pos.color[1] & pos.pieces[PAWN];
+		const U64 bbPawnDefense = nw(bbPawnsUs) | ne(bbPawnsUs);
+		const U64 bbPawnAttack = se(bbPawnsEn) | sw(bbPawnsEn);
+		const U64 bbSpan = Span(bbPawnAttack);
 		const U64 bbOutpost = ~bbSpan & bbOutpostRanks;
-		const int sqKUs = lsb(pos.color[0] & pos.pieces[KING]);
-		const int sqKEn = lsb(pos.color[1] & pos.pieces[KING]);
-		U64 bbConnected = bbDefense | South(bbDefense);
+		const Square sqKUs = lsb(pos.color[0] & pos.pieces[KING]);
+		const Square sqKEn = lsb(pos.color[1] & pos.pieces[KING]);
+		U64 bbConnected = bbPawnDefense | South(bbPawnDefense);
 		bbConnected |= South(bbConnected);
 		U64 lowRanks = Rank2BB | Rank3BB;
-		U64 bbBlocked = pawns[0] & (South(bbAll) | lowRanks);
-		U64 bbMobilityArea = ~(bbBlocked | ((pos.pieces[QUEEN] | pos.pieces[KING]) & pos.color[0]) | bbAttack);
+		U64 bbBlocked = bbPawnsUs & (South(bbAll) | lowRanks);
+		U64 bbMobilityArea = ~(bbBlocked | ((pos.pieces[QUEEN] | pos.pieces[KING]) & pos.color[0]) | bbPawnAttack);
 		for (int pt = 0; pt < PT_NB; ++pt) {
 			auto copy = pos.color[0] & pos.pieces[pt];
 			while (copy) {
 				phase += phases[pt];
-				const int sq = lsb(copy);
+				ptCount[c][pt]++;
+				const Square sq = lsb(copy);
 				copy &= copy - 1;
 				const int rank = sq / 8;
 				const int file = sq % 8;
-				scores[pt][pos.flipped] += bonus[pt][rank][file];
+				int score = bonus[pt][rank][file];
 				const U64 bbPiece = 1ULL << sq;
-				if (bbPiece & bbDefense) {
-					scores[pt][pos.flipped] += pawnProtection[pt];
-				}
 				if (pt == PAWN) {
 					// Passed pawns
 					U64 bbFile = 0x101010101010101ULL << file;
 					U64 bbForward = 0x101010101010100ULL << sq;
 					U64 blockers = bbForward | West(bbForward) | East(bbForward);
-					if (!(blockers & pawns[1])) {
+					if (!(blockers & bbPawnsEn)) {
 						int passed = PassedFile[file];
 						passed += PassedRank[rank];
 						if (rank > RANK_3)
 						{
 							int w = (rank - 2) * (rank - 2) + 2;
-							int sq2 = sq + 8;
+							Square sq2 = Square(sq + 8);
 							passed += S(0, (KingDistance(sqKEn, sq2) * 5 - KingDistance(sqKUs, sq2) * 2) * w);
 							if (rank != RANK_7)
-								passed -= S(0, KingDistance(sqKUs, sq2 + 8) * w);
+								passed -= S(0, KingDistance(sqKUs, Square(sq2 + 8)) * w);
 						}
 						scores[PASSED][pos.flipped] += passed;
 					}
 					int structure = 0;
-					if (bbPiece & bbConnected) {
-						U64 bbSupported = South(bbPiece);
-						int opposed = bbForward & pawns[1] ? 1 : 0;
-						int phalanx = (East(bbPiece) | West(bbPiece)) & pawns[0] ? 1 : 0;
-						int supported = bool(pawns[0] & East(bbSupported)) + bool(pawns[0] & West(bbSupported));
-						structure += Connected[opposed][phalanx][supported][rank];
-					}
+					U64 opposed = bbPawnsEn & bbForward;
+					U64 doubled = sq > 8 ? bbPawnsUs & SqToBb(sq - 8) : 0;
+					U64 neighbors = bbPawnsUs & bbAdjacentFiles[file];
+					U64 phalanx = neighbors & bbRanks[rank];
+					U64 supported = rank > 0 ? neighbors & bbRanks[rank - 1] : 0;
+					if (supported | phalanx)
+						structure += Connected[bool(opposed)][bool(phalanx)][Popcount(supported)][rank];
+					else if (!neighbors)
+						structure -= Isolated;
 					else {
-						U64 bbAdjacent = East(bbFile) | West(bbFile);
-						if (!(bbAdjacent & pawns[0])) {
-							structure -= Isolated;
-						}
-						else {
-							bbAdjacent &= North(bbDefense);
-							if (bbAdjacent & pawns[0] && bbAdjacent & pawns[1])
-								structure -= Backward;
+						U64 bbFront = North(bbPiece);
+						bbFront |= ne(bbFront) | nw(bbFront);
+						U64 bbBack = Span(South(East(bbPiece) | West(bbPiece)));
+						if ((!(bbBack & bbPawnsUs)) && (bbFront & bbPawnsEn)) {
+							structure -= Backward;
 						}
 					}
-					if (bbForward & pawns[0]) {
+					if (doubled && !supported)
 						structure -= Doubled;
-					}
 					scores[STRUCTURE][pos.flipped] += structure;
 				}
 				else if (pt == KING) {
-					if ((file < 3 || file>4)) {
-						U64 bbShield1 = North(bbPiece);
-						bbShield1 |= East(bbShield1) | West(bbShield1);
-						U64 bbShield2 = North(bbShield1);
-						int v1 = kingShield1 * count(bbShield1 & pawns[0]);
-						int v2 = kingShield2 * count(bbShield2 & pawns[0]);
-						scores[pt][pos.flipped] += S(v1 + v2, 0);
-					}
+					int minKingPawnDistance = 0;
+					if (bbPawnsUs)
+						while (!(bbDistanceRing[sq][++minKingPawnDistance] & bbPawnsUs)) {}
+					scores[pt][pos.flipped] += S(KingSafety(pos, sq), -16 * minKingPawnDistance);
 				}
 				else {
-					scores[pt][pos.flipped] += MobilityBonus[pt - KNIGHT][count(Attacks(pt, sq, bbAll) & bbMobilityArea)];
+					U64 bbAttacks = Attacks(pt, sq, bbAll);
+					score += MobilityBonus[pt - KNIGHT][Popcount(bbAttacks & bbMobilityArea)];
 					if (pt == ROOK) {
-						// Rook on open or semi-open files
 						const U64 file_bb = 0x101010101010101ULL << file;
-						if (!(file_bb & pawns[0])) {
-							scores[pt][pos.flipped] += RookOnFile[!(file_bb & pawns[1])];
-						}
+						if (!(file_bb & bbPawnsUs))score += RookOnFile[!(file_bb & bbPawnsEn)];
 					}
 					else if ((pt == KNIGHT) || (pt == BISHOP)) {
 						if (bbOutpost & bbPiece)
-							scores[pt][pos.flipped] += outpost[pt == BISHOP][bbDefense && bbPiece] * 2;
+							score += outpost[pt == BISHOP][bool(bbPawnDefense & bbPiece)] * 2;
 						else {
 							U64 bbMoves = (pt == KNIGHT) ? KnightAttack(sq, pos.color[0]) : BishopAttack(sq, pos.color[0] | pos.color[1]);
 							U64 bb = bbMoves & bbOutpost & ~pos.color[0];
 							if (bb)
-								scores[pt][pos.flipped] += outpost[pt == BISHOP][bbDefense && bb];
+								score += outpost[pt == BISHOP][bool(bbPawnDefense & bb)];
 						}
 						if (pt == BISHOP) {
-							U64 blocked = pawns[0] & South(bbAll);
-							scores[pt][pos.flipped] -= BishopPawns * count(pawns[0] & (bbPiece && bbLight ? bbLight : bbDark)) * (1 + count(blocked & centerFiles));
+							U64 blocked = bbPawnsUs & South(bbAll);
+							score -= BishopPawns * Popcount(bbPawnsUs & (bbPiece & bbLight ? bbLight : bbDark)) * (1 + Popcount(blocked & centerFiles));
+							if (MoreThanOne(bbAttacks & center))score += LongDiagonalBishop;
 						}
 					}
 				}
+				scores[pt][pos.flipped] += score;
 			}
+
 		}
-
-
-		U64 bbPieces = pos.pieces[BISHOP] & pos.color[0];
-		if (bbPieces) {
-			bool bw = bbPieces & bbLight;
-			bool bb = bbPieces & bbDark;
-			if (bw && bb)
-				scores[BISHOP][pos.flipped] += bishopPair;
-			else if (bw)
-				scores[BISHOP][pos.flipped] += bishopBad * count(bbLight & pawns[0]);
-			else
-				scores[BISHOP][pos.flipped] += bishopBad * count(bbDark & pawns[0]);
-		}
-
 		score += TotalScore(pos.flipped);
 		flip(pos);
 		score = -score;
 	}
+	const int pieceCount[2][6] = {
+  { ptCount[0][2] > 1,ptCount[0][0],ptCount[0][1],
+	ptCount[0][2],ptCount[0][3],ptCount[0][4]},
+	{ ptCount[1][2] > 1,ptCount[1][0],ptCount[1][1],
+	ptCount[1][2],ptCount[1][3],ptCount[1][4]} };
+	int imbalanceUs = Imbalance(0, pieceCount);
+	int imbalanceEn = Imbalance(1, pieceCount);
+	int imbalance = (imbalanceUs - imbalanceEn) / 16;
+	score += S(imbalance, imbalance);
 	return (Mg(score) * phase + Eg(score) * (24 - phase)) / 24;
 }
 
@@ -824,289 +956,18 @@ static auto GetHash(const Position& pos) {
 	return hash;
 }
 
-static int SearchAlpha(Position& pos,
-	int alpha,
-	const int beta,
-	int depth,
-	const int ply,
-	// minify enable filter delete
-	int64_t& nodes,
-	// minify disable filter delete
-	const int64_t stop_time,
-	int& stop,
-	Stack* const stack,
-	int64_t(&hh_table)[2][64][64],
-	vector<U64>& hash_history,
-	const int do_null = true) {
-	const int static_eval = Eval(pos);
-	// Don't overflow the stack
-	if (ply > 127) {
-		return static_eval;
+static void CheckUp() {
+	if ((info.timeLimit && GetTimeMs() - info.timeStart > info.timeLimit) || (info.nodesLimit && info.nodes > info.nodesLimit))
+		info.stop = true;
+}
+
+static int Permill() {
+	int pm = 0;
+	for (int n = 0; n < 1000; n++) {
+		if (transposition_table[n].key)
+			pm++;
 	}
-	stack[ply].score = static_eval;
-	// Check extensions
-	const auto in_check = Attacked(pos, lsb(pos.color[0] & pos.pieces[KING]));
-	depth = in_check ? max(1, depth + 1) : depth;
-	const int improving = ply > 1 && static_eval > stack[ply - 2].score;
-	const int in_qsearch = depth <= 0;
-	if (in_qsearch && static_eval > alpha) {
-		if (static_eval >= beta) {
-			return beta;
-		}
-		alpha = static_eval;
-	}
-
-	const U64 tt_key = GetHash(pos);
-
-	if (ply > 0 && !in_qsearch) {
-		// Repetition detection
-		for (const auto old_hash : hash_history) {
-			if (old_hash == tt_key) {
-				return 0;
-			}
-		}
-
-		if (!in_check && alpha == beta - 1) {
-			// Reverse futility pruning
-			if (depth < 5) {
-				const int margins[] = { 50, 50, 100, 200, 300 };
-				if (static_eval - margins[depth - improving] >= beta) {
-					return beta;
-				}
-			}
-
-			// Null move pruning
-			if (depth > 2 && static_eval >= beta && do_null) {
-				auto npos = pos;
-				flip(npos);
-				npos.ep = 0;
-				if (-SearchAlpha(npos,
-					-beta,
-					-beta + 1,
-					depth - 4 - depth / 6,
-					ply + 1,
-					// minify enable filter delete
-					nodes,
-					// minify disable filter delete
-					stop_time,
-					stop,
-					stack,
-					hh_table,
-					hash_history,
-					false) >= beta) {
-					return beta;
-				}
-			}
-
-			// Razoring
-			if (depth == 1 && static_eval + 200 < alpha) {
-				return SearchAlpha(pos,
-					alpha,
-					beta,
-					0,
-					ply,
-					// minify enable filter delete
-					nodes,
-					// minify disable filter delete
-					stop_time,
-					stop,
-					stack,
-					hh_table,
-					hash_history,
-					do_null);
-			}
-		}
-	}
-
-	// TT Probing
-	TT_Entry& tt_entry = transposition_table[tt_key % num_tt_entries];
-	Move tt_move{};
-	if (tt_entry.key == tt_key) {
-		tt_move = tt_entry.move;
-		if (ply > 0 && tt_entry.depth >= depth) {
-			if (tt_entry.flag == 0) {
-				return tt_entry.score;
-			}
-			if (tt_entry.flag == 1 && tt_entry.score <= alpha) {
-				return tt_entry.score;
-			}
-			if (tt_entry.flag == 2 && tt_entry.score >= beta) {
-				return tt_entry.score;
-			}
-		}
-	}
-	// Internal iterative reduction
-	else if (depth > 3) {
-		depth--;
-	}
-
-	// Exit early if out of time
-	if (stop || (ply > 0 && Now() >= stop_time)) { return 0; }
-
-	auto& moves = stack[ply].moves;
-	const int num_moves = MoveGen(pos, moves, in_qsearch);
-
-	// Score moves
-	int64_t move_scores[256];
-	for (int j = 0; j < num_moves; ++j) {
-		const int capture = PieceTypeOn(pos, moves[j].to);
-		if (moves[j] == tt_move) {
-			move_scores[j] = 1LL << 62;
-		}
-		else if (capture != PT_NB) {
-			move_scores[j] = ((capture + 1) * (1LL << 54)) - PieceTypeOn(pos, moves[j].from);
-		}
-		else if (moves[j] == stack[ply].killer) {
-			move_scores[j] = 1LL << 50;
-		}
-		else {
-			move_scores[j] = hh_table[pos.flipped][moves[j].from][moves[j].to];
-		}
-	}
-
-	int quiet_moves_evaluated = 0;
-	int moves_evaluated = 0;
-	int best_score = -INF;
-	Move best_move{};
-	uint16_t tt_flag = 1;  // Alpha flag
-	hash_history.emplace_back(tt_key);
-	for (int i = 0; i < num_moves; ++i) {
-		// Find best move remaining
-		int best_move_index = i;
-		for (int j = i; j < num_moves; ++j) {
-			if (move_scores[j] > move_scores[best_move_index]) {
-				best_move_index = j;
-			}
-		}
-
-		const auto move = moves[best_move_index];
-		const auto best_move_score = move_scores[best_move_index];
-
-		moves[best_move_index] = moves[i];
-		move_scores[best_move_index] = move_scores[i];
-
-		// Delta pruning
-		if (in_qsearch && !in_check && static_eval + 50 + max_material[PieceTypeOn(pos, move.to)] < alpha) {
-			best_score = alpha;
-			break;
-		}
-
-		// Forward futility pruning
-		if (!in_qsearch && !in_check && !(move == tt_move) &&
-			static_eval + 150 * depth + max_material[PieceTypeOn(pos, move.to)] < alpha) {
-			best_score = alpha;
-			break;
-		}
-
-		auto npos = pos;
-		if (!MakeMove(npos, move)) {
-			continue;
-		}
-
-		// minify enable filter delete
-		nodes++;
-		// minify disable filter delete
-
-		int score;
-		if (in_qsearch || !moves_evaluated) {
-		full_window:
-			score = -SearchAlpha(npos,
-				-beta,
-				-alpha,
-				depth - 1,
-				ply + 1,
-				// minify enable filter delete
-				nodes,
-				// minify disable filter delete
-				stop_time,
-				stop,
-				stack,
-				hh_table,
-				hash_history);
-		}
-		else {
-			// Late move reduction
-			int reduction = max(0,
-				depth > 3 && moves_evaluated > 3
-				? 1 + moves_evaluated / 16 + depth / 10 + (alpha == beta - 1) - improving
-				: 0);
-
-		zero_window:
-			score = -SearchAlpha(npos,
-				-alpha - 1,
-				-alpha,
-				depth - reduction - 1,
-				ply + 1,
-				// minify enable filter delete
-				nodes,
-				// minify disable filter delete
-				stop_time,
-				stop,
-				stack,
-				hh_table,
-				hash_history);
-
-			if (reduction > 0 && score > alpha) {
-				reduction = 0;
-				goto zero_window;
-			}
-
-			if (score > alpha && score < beta) {
-				goto full_window;
-			}
-		}
-		moves_evaluated++;
-		if (PieceTypeOn(pos, move.to) == PT_NB) {
-			quiet_moves_evaluated++;
-		}
-
-		// Exit early if out of time
-		//if (stop || Now() >= stop_time) {hash_history.pop_back();return 0;}
-
-		if (score > best_score) {
-			best_score = score;
-			best_move = move;
-			if (score > alpha) {
-				tt_flag = 0;  // Exact flag
-				alpha = score;
-				stack[ply].move = move;
-			}
-		}
-		else if (!in_qsearch && !in_check && alpha == beta - 1 && depth <= 3 && moves_evaluated >= (depth * 3) + 2 &&
-			static_eval < alpha - (50 * depth) && best_move_score < (1LL << 50)) {
-			best_score = alpha;
-			break;
-		}
-
-		if (alpha >= beta) {
-			tt_flag = 2;  // Beta flag
-			const int capture = PieceTypeOn(pos, move.to);
-			if (capture == PT_NB) {
-				hh_table[pos.flipped][move.from][move.to] += depth * depth;
-				stack[ply].killer = move;
-			}
-			break;
-		}
-
-		// Late move pruning based on quiet move count
-		if (!in_check && alpha == beta - 1 && quiet_moves_evaluated > 3 + 2 * depth * depth) {
-			break;
-		}
-	}
-	hash_history.pop_back();
-
-	// Return mate or draw scores if no moves found
-	if (best_score == -INF) {
-		return in_qsearch ? alpha : in_check ? ply - MATE_SCORE : 0;
-	}
-
-	// Save to TT
-	if (tt_entry.key != tt_key || depth >= tt_entry.depth || tt_flag == 0) {
-		tt_entry =
-			TT_Entry{ tt_key, best_move == no_move ? tt_move : best_move, best_score, in_qsearch ? 0 : depth, tt_flag };
-	}
-
-	return alpha;
+	return pm;
 }
 
 static bool IsPseudolegalMove(const Position& pos, const Move& move) {
@@ -1156,32 +1017,433 @@ static void PrintPv(const Position& pos, const Move move, vector<U64>& hash_hist
 	hash_history.pop_back();
 }
 
-int Permill() {
-	int pm = 0;
-	for (int n = 0; n < 1000; n++) {
-		if (transposition_table[n].key)
-			pm++;
+static int SearchQuiesce(Position& pos,
+	int alpha,
+	const int beta,
+	const int ply,
+	Stack* const stack,
+	int64_t(&hh_table)[2][64][64]) {
+
+	// Exit early if out of time
+	if ((++info.nodes & 0xffff) == 0)
+		CheckUp();
+	if (info.stop)
+		return 0;
+
+	const int static_eval = Eval(pos);
+	// Don't overflow the stack
+	if (ply > 127) {
+		return static_eval;
 	}
-	return pm;
+	stack[ply].score = static_eval;
+	// Check extensions
+	const auto in_check = Attacked(pos, lsb(pos.color[0] & pos.pieces[KING]));
+	const int improving = ply > 1 && static_eval > stack[ply - 2].score;
+	if (static_eval > alpha) {
+		if (static_eval >= beta) {
+			return beta;
+		}
+		alpha = static_eval;
+	}
+
+	const U64 tt_key = GetHash(pos);
+
+	// TT Probing
+	TT_Entry& tt_entry = transposition_table[tt_key % num_tt_entries];
+	Move tt_move{};
+	if (tt_entry.key == tt_key) {
+		tt_move = tt_entry.move;
+		if (ply > 0) {
+			if (tt_entry.flag == 0) {
+				return tt_entry.score;
+			}
+			if (tt_entry.flag == 1 && tt_entry.score <= alpha) {
+				return tt_entry.score;
+			}
+			if (tt_entry.flag == 2 && tt_entry.score >= beta) {
+				return tt_entry.score;
+			}
+		}
+	}
+
+	auto& moves = stack[ply].moves;
+	const int num_moves = MoveGen(pos, moves, true);
+
+	// Score moves
+	int64_t move_scores[256];
+	for (int j = 0; j < num_moves; ++j) {
+		const int capture = PieceTypeOn(pos, moves[j].to);
+		if (moves[j] == tt_move) {
+			move_scores[j] = 1LL << 62;
+		}
+		else if (capture != PT_NB) {
+			move_scores[j] = ((capture + 1) * (1LL << 54)) - PieceTypeOn(pos, moves[j].from);
+		}
+		else if (moves[j] == stack[ply].killer) {
+			move_scores[j] = 1LL << 50;
+		}
+		else {
+			move_scores[j] = hh_table[pos.flipped][moves[j].from][moves[j].to];
+		}
+	}
+
+	int moves_evaluated = 0;
+	int best_score = -INF;
+	Move best_move{};
+	uint16_t tt_flag = lowerbound;
+	hash_history.emplace_back(tt_key);
+	for (int i = 0; i < num_moves; ++i) {
+		// Find best move remaining
+		int best_move_index = i;
+		for (int j = i; j < num_moves; ++j) {
+			if (move_scores[j] > move_scores[best_move_index]) {
+				best_move_index = j;
+			}
+		}
+
+		const auto move = moves[best_move_index];
+		const auto best_move_score = move_scores[best_move_index];
+
+		moves[best_move_index] = moves[i];
+		move_scores[best_move_index] = move_scores[i];
+
+		// Delta pruning
+		if (!in_check && static_eval + 50 + max_material[PieceTypeOn(pos, move.to)] < alpha) {
+			best_score = alpha;
+			break;
+		}
+
+		auto npos = pos;
+		if (!MakeMove(npos, move)) {
+			continue;
+		}
+
+		int score = -SearchQuiesce(npos,
+			-beta,
+			-alpha,
+			ply + 1,
+			stack,
+			hh_table);
+		moves_evaluated++;
+
+		// Exit early if out of time
+		if (info.stop) { hash_history.pop_back(); return 0; }
+
+		if (score > best_score) {
+			best_score = score;
+			best_move = move;
+			if (score > alpha) {
+				tt_flag = exact;
+				alpha = score;
+				stack[ply].move = move;
+			}
+		}
+
+		if (alpha >= beta) {
+			tt_flag = upperbound;
+			break;
+		}
+	}
+	hash_history.pop_back();
+
+	if (best_score == -INF)
+		return alpha;
+
+	// Save to TT
+	if (tt_entry.key != tt_key || !tt_entry.depth || tt_flag == exact) {
+		tt_entry = TT_Entry{ tt_key, best_move == no_move ? tt_move : best_move, best_score,0, tt_flag };
+	}
+
+	return alpha;
 }
 
-auto SearchIteratively(Position& pos,
+static int SearchAlpha(Position& pos,
+	int alpha,
+	int beta,
+	int depth,
+	const int ply,
+	Stack* const stack,
+	int64_t(&hh_table)[2][64][64],
 	vector<U64>& hash_history,
-	// minify enable filter delete
-	int thread_id,
-	const bool is_bench,
-	// minify disable filter delete
-	const int64_t start_time,
-	const int allocated_time,
-	int& stop) {
+	const int do_null = true) {
+	const int static_eval = Eval(pos);
+	// Don't overflow the stack
+	if (ply > 127) {
+		return static_eval;
+	}
+	stack[ply].score = static_eval;
+	// Check extensions
+	const auto in_check = Attacked(pos, lsb(pos.color[0] & pos.pieces[KING]));
+	if (in_check)
+		depth++;
+	if (depth <= 0)
+		return SearchQuiesce(pos, alpha, beta, ply, stack, hh_table);
+	if ((++info.nodes & 0xffff) == 0)
+		CheckUp();
+	if (info.stop)
+		return 0;
+	const int improving = ply > 1 && static_eval > stack[ply - 2].score;
+
+	int  mate_value = MATE_SCORE - ply;
+	if (alpha < -mate_value)
+		alpha = -mate_value;
+	if (beta > mate_value - 1)
+		beta = mate_value - 1;
+	if (alpha >= beta) return alpha;
+
+	const U64 tt_key = GetHash(pos);
+
+	if (ply > 0) {
+		// Repetition detection
+		for (const auto old_hash : hash_history) {
+			if (old_hash == tt_key) {
+				return 0;
+			}
+		}
+
+		if (!in_check && alpha == beta - 1) {
+			// Reverse futility pruning
+			if (depth < 5) {
+				const int margins[] = { 50, 50, 100, 200, 300 };
+				if (static_eval - margins[depth - improving] >= beta) {
+					return beta;
+				}
+			}
+
+			// Null move pruning
+			if (depth > 2 && static_eval >= beta && do_null) {
+				auto npos = pos;
+				flip(npos);
+				npos.ep = 0;
+				if (-SearchAlpha(npos,
+					-beta,
+					-beta + 1,
+					depth - 4 - depth / 6,
+					ply + 1,
+					stack,
+					hh_table,
+					hash_history,
+					false) >= beta) {
+					return beta;
+				}
+			}
+
+			// Razoring
+			if (depth == 1 && static_eval + 200 < alpha) {
+				return SearchAlpha(pos,
+					alpha,
+					beta,
+					0,
+					ply,
+					stack,
+					hh_table,
+					hash_history,
+					do_null);
+			}
+		}
+	}
+
+	// TT Probing
+	TT_Entry& tt_entry = transposition_table[tt_key % num_tt_entries];
+	Move tt_move{};
+	if (tt_entry.key == tt_key) {
+		tt_move = tt_entry.move;
+		if (ply > 0 && tt_entry.depth >= depth) {
+			if (tt_entry.flag == 0) {
+				return tt_entry.score;
+			}
+			if (tt_entry.flag == 1 && tt_entry.score <= alpha) {
+				return tt_entry.score;
+			}
+			if (tt_entry.flag == 2 && tt_entry.score >= beta) {
+				return tt_entry.score;
+			}
+		}
+	}
+	// Internal iterative reduction
+	else if (depth > 3) {
+		depth--;
+	}
+
+	auto& moves = stack[ply].moves;
+	const int num_moves = MoveGen(pos, moves, false);
+
+	// Score moves
+	int64_t move_scores[256];
+	for (int j = 0; j < num_moves; ++j) {
+		const int capture = PieceTypeOn(pos, moves[j].to);
+		if (moves[j] == tt_move) {
+			move_scores[j] = 1LL << 62;
+		}
+		else if (capture != PT_NB) {
+			move_scores[j] = ((capture + 1) * (1LL << 54)) - PieceTypeOn(pos, moves[j].from);
+		}
+		else if (moves[j] == stack[ply].killer) {
+			move_scores[j] = 1LL << 50;
+		}
+		else {
+			move_scores[j] = hh_table[pos.flipped][moves[j].from][moves[j].to];
+		}
+	}
+
+	int quiet_moves_evaluated = 0;
+	int moves_evaluated = 0;
+	int best_score = -INF;
+	Move best_move{};
+	uint16_t tt_flag = 1;  // Alpha flag
+	hash_history.emplace_back(tt_key);
+	for (int i = 0; i < num_moves; ++i) {
+		// Find best move remaining
+		int best_move_index = i;
+		for (int j = i; j < num_moves; ++j) {
+			if (move_scores[j] > move_scores[best_move_index]) {
+				best_move_index = j;
+			}
+		}
+
+		const auto move = moves[best_move_index];
+		const auto best_move_score = move_scores[best_move_index];
+
+		moves[best_move_index] = moves[i];
+		move_scores[best_move_index] = move_scores[i];
+
+
+		// Forward futility pruning
+		if (!in_check && !(move == tt_move) &&
+			static_eval + 150 * depth + max_material[PieceTypeOn(pos, move.to)] < alpha) {
+			best_score = alpha;
+			break;
+		}
+
+		auto npos = pos;
+		if (!MakeMove(npos, move)) {
+			continue;
+		}
+
+		int score;
+		if (!moves_evaluated) {
+		full_window:
+			score = -SearchAlpha(npos,
+				-beta,
+				-alpha,
+				depth - 1,
+				ply + 1,
+				stack,
+				hh_table,
+				hash_history);
+		}
+		else {
+			// Late move reduction
+			int reduction = max(0,
+				depth > 3 && moves_evaluated > 3
+				? 1 + moves_evaluated / 16 + depth / 10 + (alpha == beta - 1) - improving
+				: 0);
+
+		zero_window:
+			score = -SearchAlpha(npos,
+				-alpha - 1,
+				-alpha,
+				depth - reduction - 1,
+				ply + 1,
+				stack,
+				hh_table,
+				hash_history);
+
+			if (reduction > 0 && score > alpha) {
+				reduction = 0;
+				goto zero_window;
+			}
+
+			if (score > alpha && score < beta) {
+				goto full_window;
+			}
+		}
+		moves_evaluated++;
+		if (PieceTypeOn(pos, move.to) == PT_NB) {
+			quiet_moves_evaluated++;
+		}
+
+		// Exit early if out of time
+		if (info.stop) { hash_history.pop_back(); return 0; }
+
+		if (score > best_score) {
+			best_score = score;
+			best_move = move;
+			if (score > alpha) {
+				tt_flag = 0;  // Exact flag
+				alpha = score;
+				stack[ply].move = move;
+
+				if (!ply) {
+					cout << "info";
+					cout << " depth " << depth;
+					if (abs(score) < MATE_SCORE - MAX_DEPTH)
+						cout << " score cp " << score;
+					else
+						cout << " score mate " << (score > 0 ? (MATE_SCORE - score + 1) >> 1 : -(MATE_SCORE + score) >> 1);
+					const auto elapsed = GetTimeMs() - info.timeStart;
+					cout << " alpha " << alpha;
+					cout << " beta " << beta;
+					cout << " time " << elapsed;
+					cout << " nodes " << info.nodes;
+					if (elapsed > 0) {
+						cout << " nps " << info.nodes * 1000 / elapsed;
+					}
+					cout << " hashfull " << Permill();
+					cout << " currmovenumber " << moves_evaluated;
+					cout << " pv";
+					PrintPv(pos, stack[0].move, hash_history);
+					cout << endl;
+				}
+			}
+		}
+		else if (!in_check && alpha == beta - 1 && depth <= 3 && moves_evaluated >= (depth * 3) + 2 &&
+			static_eval < alpha - (50 * depth) && best_move_score < (1LL << 50)) {
+			best_score = alpha;
+			break;
+		}
+
+		if (alpha >= beta) {
+			tt_flag = 2;  // Beta flag
+			const int capture = PieceTypeOn(pos, move.to);
+			if (capture == PT_NB) {
+				hh_table[pos.flipped][move.from][move.to] += depth * depth;
+				stack[ply].killer = move;
+			}
+			break;
+		}
+
+		// Late move pruning based on quiet move count
+		if (!in_check && alpha == beta - 1 && quiet_moves_evaluated > 3 + 2 * depth * depth) {
+			break;
+		}
+	}
+	hash_history.pop_back();
+
+	// Return mate or draw scores if no moves found
+	if (best_score == -INF) {
+		return in_check ? ply - MATE_SCORE : 0;
+	}
+
+	// Save to TT
+	if (tt_entry.key != tt_key || depth >= tt_entry.depth || tt_flag == 0) {
+		tt_entry =
+			TT_Entry{ tt_key, best_move == no_move ? tt_move : best_move, best_score, depth, tt_flag };
+	}
+
+	return alpha;
+}
+
+auto SearchIteratively(Position& pos, vector<U64>& hash_history) {
+	info.stop = false;
+	info.nodes = 0;
+	info.timeStart = GetTimeMs();
+	TranspositionClear();
 	Stack stack[128] = {};
 	int64_t hh_table[2][64][64] = {};
-	// minify enable filter delete
-	int64_t nodes = 0;
-	// minify disable filter delete
 
 	int score = 0;
-	for (int i = 1; i < MAX_DEPTH; ++i) {
+	for (int i = 1; i <= info.depthLimit; ++i) {
 		auto window = 40;
 		auto research = 0;
 	research:
@@ -1190,61 +1452,12 @@ auto SearchIteratively(Position& pos,
 			score + window,
 			i,
 			0,
-			// minify enable filter delete
-			nodes,
-			// minify disable filter delete
-			start_time + allocated_time,
-			stop,
 			stack,
 			hh_table,
 			hash_history);
 
-		// Hard time limit exceeded
-		if (Now() >= start_time + allocated_time || stop) {
+		if (info.stop)
 			break;
-		}
-
-		// minify enable filter delete
-		if (thread_id == 0) {
-			const auto elapsed = Now() - start_time;
-
-			cout << "info";
-			cout << " depth " << i;
-			if (abs(newscore) < MATE_SCORE - MAX_DEPTH)
-				cout << " score cp " << ValueToCp(newscore);
-			else
-				cout << " score mate " << (newscore > 0 ? (MATE_SCORE - newscore + 1) >> 1 : -(MATE_SCORE + newscore) >> 1);
-			if (newscore >= score + window) {
-				cout << " lowerbound";
-			}
-			else if (newscore <= score - window) {
-				cout << " upperbound";
-			}
-			cout << " time " << elapsed;
-			cout << " nodes " << nodes;
-			if (elapsed > 0) {
-				cout << " nps " << nodes * 1000 / elapsed;
-			}
-			cout << " hashfull " << Permill();
-			// Not a lowerbound - a fail low won't have a meaningful PV.
-			if (newscore > score - window) {
-				cout << " pv";
-				PrintPv(pos, stack[0].move, hash_history);
-			}
-			cout << endl;
-
-			// OpenBench compliance
-			if (is_bench && i >= 10) {
-				cout << "Bench: ";
-				cout << elapsed << " ms ";
-				cout << nodes << " nodes ";
-				cout << nodes * 1000 / max(elapsed, static_cast<int64_t>(1)) << " nps";
-				cout << endl;
-				break;
-			}
-		}
-		// minify disable filter delete
-
 		if (newscore >= score + window || newscore <= score - window) {
 			window <<= ++research;
 			score = newscore;
@@ -1254,7 +1467,7 @@ auto SearchIteratively(Position& pos,
 		score = newscore;
 
 		// Early exit after completed ply
-		if (!research && Now() > start_time + allocated_time / 4) {
+		if (!research && GetTimeMs() - info.timeStart > info.timeLimit / 2) {
 			break;
 		}
 	}
@@ -1335,7 +1548,7 @@ static void SplitStr(const std::string& txt, std::vector<std::string>& vStr, cha
 		initialPos = pos + 1;
 		pos = txt.find(ch, initialPos);
 	}
-	vStr.push_back(txt.substr(initialPos, std::min(pos, txt.size()) - initialPos + 1));
+	vStr.push_back(txt.substr(initialPos, min(pos, txt.size()) - initialPos + 1));
 }
 
 static void SplitInt(const string& txt, vector<int>& vInt, char ch) {
@@ -1352,7 +1565,18 @@ static int GetVal(vector<int> v, int i) {
 	return 0;
 }
 
-static void InitEval() {
+static void Init() {
+	for (int f = FILE_A; f <= FILE_H; ++f)
+		bbAdjacentFiles[f] = (f > FILE_A ? MASK_FILE[f - 1] : 0) | (f < FILE_H ? MASK_FILE[f + 1] : 0);
+	for (int r = RANK_1; r <= RANK_8; ++r)
+		bbRanks[r] = 0xFFULL << (r * 8);
+	for (int f = FILE_A; f <= FILE_H; ++f)
+		bbFiles[f] = FileABB << f;
+	U64 bb = ~0ULL;
+	for (int r = RANK_1; r <= RANK_8; ++r) {
+		bb &= ~bbRanks[r];
+		bbForwardRanks[r] = bb | bbRanks[r];
+	}
 	int mg, eg;
 	vector<int> split{};
 	int eloMod = 600 - (600 * options.elo) / 2500;
@@ -1363,25 +1587,6 @@ static void InitEval() {
 		max_material[pt] = max(mg, eg);
 	}
 
-	SplitInt(options.defense, split, ' ');
-	for (int pt = PAWN; pt < PT_NB; pt++) {
-		mg = GetVal(split, pt * 2);
-		eg = GetVal(split, pt * 2 + 1);
-		pawnProtection[pt] = S(mg, eg);
-	}
-
-	SplitInt(options.bishop, split, ' ');
-	mg = GetVal(split, 0);
-	eg = GetVal(split, 1);
-	bishopPair = S(mg, eg);
-	mg = GetVal(split, 2);
-	eg = GetVal(split, 3);
-	bishopBad = S(mg, eg);
-
-	SplitInt(options.king, split, ' ');
-	kingShield1 = GetVal(split, 0);
-	kingShield2 = GetVal(split, 1);
-
 	SplitInt(options.tempo, split, ' ');
 	mg = GetVal(split, 0);
 	eg = GetVal(split, 1);
@@ -1391,7 +1596,7 @@ static void InitEval() {
 		for (int r = RANK_1; r < RANK_NB; ++r)
 			for (int f = FILE_A; f < FILE_NB; ++f)
 			{
-				int fi = std::min(int(f), 7 - f);
+				int fi = min(int(f), 7 - f);
 				bonus[pt][r][f] = material[pt];
 				bonus[pt][r][f] += BonusOrg[pt][r][fi];
 				bonusMax[pt][r][f] = ValueMax(bonus[pt][r][f]);
@@ -1408,6 +1613,15 @@ static void InitEval() {
 
 					Connected[opposed][phalanx][support][r] = S(v, v * (r - 2) / 4);
 				}
+	for (int s1 = 0; s1 <= 63; ++s1)
+		for (int s2 = 0; s2 <= 63; ++s2)
+			if (s1 != s2)
+			{
+				int df = std::abs(FileOf(Square(s1)) - FileOf(Square(s2)));
+				int dr = std::abs(RankOf(Square(s1)) - RankOf(Square(s2)));
+				int d = max(df, dr);
+				bbDistanceRing[s1][d] |= (1ULL << s2);
+			}
 }
 
 static string StrToLower(string s) {
@@ -1463,7 +1677,7 @@ static int ScoreToValue(int score) {
 }
 
 static string ShowScore(string result) {
-	int len = 16 - result.length();
+	int len = 16 - (int)result.length();
 	if (len < 0)
 		len = 0;
 	result.append(len, ' ');
@@ -1481,22 +1695,108 @@ static void PrintTerm(string name, int idx) {
 	std::cout << ShowScore(name) << ShowScore(sw) << " " << ShowScore(sb) << " " << ShowScore(sw - sb) << endl;
 }
 
+// Function to put thousands
+// separators in the given integer
+string ThousandSeparator(uint64_t n)
+{
+	string ans = "";
+
+	// Convert the given integer
+	// to equivalent string
+	string num = to_string(n);
+
+	// Initialise count
+	int count = 0;
+
+	// Traverse the string in reverse
+	for (int i = (int)num.size() - 1; i >= 0; i--) {
+		ans.push_back(num[i]);
+
+		// If three characters
+		// are traversed
+		if (++count == 3) {
+			ans.push_back(' ');
+			count = 0;
+		}
+	}
+
+	// Reverse the string to get
+	// the desired output
+	reverse(ans.begin(), ans.end());
+
+	// If the given string is
+	// less than 1000
+	if (ans.size() % 4 == 0) {
+
+		// Remove ','
+		ans.erase(ans.begin());
+	}
+
+	return ans;
+}
+
+//Displays a summary
+static void PrintSummary(U64 time, U64 nodes) {
+	if (time < 1)
+		time = 1;
+	uint64_t nps = (nodes * 1000) / time;
+	printf("-----------------------------\n");
+	printf("Time        : %11s\n", ThousandSeparator(time));
+	printf("Nodes       : %11s\n", ThousandSeparator(nodes));
+	printf("Nps         : %11s\n", ThousandSeparator(nps));
+	printf("-----------------------------\n");
+}
+
+static void ResetLimit()
+{
+	info.stop = false;
+	info.nodes = 0;
+	info.depthLimit = MAX_DEPTH;
+	info.nodesLimit = 0;
+	info.timeLimit = 0;
+	info.timeStart = GetTimeMs();
+}
+
+//Performance test
+static inline void PerftDriver(Position& pos, int depth) {
+	if (!depth)
+	{
+		info.nodes++;
+		return;
+	}
+	int count;
+	Move moves[256];
+	const int num_moves = MoveGen(pos, moves, 0);
+	for (int i = 0; i < num_moves; i++)
+	{
+		Position npos = pos;
+		if (MakeMove(npos, moves[i]))
+			PerftDriver(npos, depth - 1);
+	}
+}
+
 static void UciBench() {
-	int stop = false;
-	const auto start = Now();
-	const auto allocated_time = 10000;
-	auto move = SearchIteratively(pos,
-		hash_history,
-		0,
-		true,
-		start,
-		allocated_time,
-		stop);
-	cout << "bestmove " << MoveToUci(move, pos.flipped) << endl;
+	ResetLimit();
+	info.timeLimit = 10000;
+	SearchIteratively(pos, hash_history);
+	PrintSummary(GetTimeMs() - info.timeStart, info.nodes);
+}
+
+static void UciPerformance() {
+	ResetLimit();
+	printf("Performance Test\n");
+	int depth = 0;
+	SetFen(pos, DEFAULT_FEN);
+	while (GetTimeMs() - info.timeStart < 3000)
+	{
+		PerftDriver(pos, ++depth);
+		printf("%2d. %8llu %12llu\n", depth, GetTimeMs() - info.timeStart, info.nodes);
+	}
+	PrintSummary(GetTimeMs() - info.timeStart, info.nodes);
 }
 
 static void UciEval() {
-	SetFen(pos, "1k6/1pp1R1p1/4PN2/4b1P1/5p2/3q1n2/1P2R1PK/8 b - - 0 1");
+	SetFen(pos, "5rk1/ppp2ppp/8/4pP2/1P2Bb2/2P2K2/8/7R b - - 0 28");
 	PrintBoard(pos);
 	cout << "side " << (pos.flipped ? "black" : "white") << endl;
 	int score = Eval(pos);
@@ -1528,10 +1828,7 @@ static void UciCommand(string str) {
 	{
 		cout << "id name " << NAME << endl;
 		cout << "option name UCI_Elo type spin default " << options.eloMax << " min " << options.eloMin << " max " << options.eloMax << endl;
-		cout << "option name threads type spin default " << options.threads << " min 1 max 256" << endl;
 		cout << "option name hash type spin default " << (options.hash >> 15) << " min 1 max 65536" << endl;
-		cout << "option name bishop type string default " << options.bishop << endl;
-		cout << "option name defense type string default " << options.defense << endl;
 		cout << "uciok" << endl;
 	}
 	else if (command == "setoption")
@@ -1542,24 +1839,13 @@ static void UciCommand(string str) {
 			name = StrToLower(name);
 			if (name == "uci_elo") {
 				options.elo = stoi(value);
-				InitEval();
-			}
-			else if (name == "threads") {
-				options.threads = stoi(value);
-				options.threads = max(1, min(256, options.threads));
+				Init();
 			}
 			else if (name == "hash") {
 				options.hash = stoi(value);
 				options.hash = min(max(options.hash, 1ULL), 65536ULL) * 1024 * 1024 / sizeof(TT_Entry);
 				transposition_table.resize(options.hash);
-				transposition_table.clear();
 			}
-			else if (name == "bishop")
-				options.bishop = value;
-			else if (name == "king")
-				options.king = value;
-			else if (name == "defense")
-				options.defense = value;
 		}
 	}
 	else if (command == "isready") {
@@ -1586,7 +1872,7 @@ static void UciCommand(string str) {
 		}
 		pFen = trim(pFen);
 		if (!pFen.empty())
-			SetFen(pos, pFen == "" ? defFen : pFen);
+			SetFen(pos, pFen == "" ? DEFAULT_FEN : pFen);
 		Move moves[256];
 		for (string uci : pMoves) {
 			const int num_moves = MoveGen(pos, moves, false);
@@ -1605,49 +1891,43 @@ static void UciCommand(string str) {
 		}
 	}
 	else if (command == "go") {
+		int depth = MAX_DEPTH;
+		int nodes = 0;
 		int wtime = 0;
 		int btime = 0;
-		int mtime = 0;
+		int winc = 0;
+		int binc = 0;
+		int movetime = 0;
+		int movestogo = 32;
+		if (UciValue(split, "depth", value))
+			depth = stoi(value);
+		if (UciValue(split, "nodes", value))
+			nodes = stoi(value);
 		if (UciValue(split, "wtime", value))
 			wtime = stoi(value);
 		if (UciValue(split, "btime", value))
 			btime = stoi(value);
+		if (UciValue(split, "winc", value))
+			winc = stoi(value);
+		if (UciValue(split, "binc", value))
+			binc = stoi(value);
 		if (UciValue(split, "movetime", value))
-			mtime = stoi(value);
-		const auto start = Now();
-		const auto allocated_time = mtime ? mtime : ((pos.flipped ? btime : wtime) / 30);
-
-		// Lazy SMP
-		vector<thread> threads;
-		vector<int> stops(options.threads, false);
-		for (int i = 1; i < options.threads; ++i) {
-			threads.emplace_back([=, &stops]() mutable {
-				SearchIteratively(pos,
-					hash_history,
-					i,
-					false,
-					start,
-					1 << 30,
-					stops[i]);
-				});
-		}
-		const auto best_move = SearchIteratively(pos,
-			hash_history,
-			0,
-			false,
-			start,
-			allocated_time,
-			stops[0]);
-		for (int i = 1; i < options.threads; ++i) {
-			stops[i] = true;
-		}
-		for (int i = 1; i < options.threads; ++i) {
-			threads[i - 1].join();
-		}
+			movetime = stoi(value);
+		if (UciValue(split, "movestogo", value))
+			movestogo = stoi(value);
+		int ct = pos.flipped ? btime : wtime;
+		int inc = pos.flipped ? binc : winc;
+		int st = min(ct / movestogo + inc, ct / 2);
+		info.depthLimit = depth;
+		info.nodesLimit = nodes;
+		info.timeLimit = movetime ? movetime : st;
+		const Move best_move = SearchIteratively(pos, hash_history);
 		cout << "bestmove " << MoveToUci(best_move, pos.flipped) << endl << flush;
 	}
 	else if (command == "bench")
 		UciBench();
+	else if (command == "perft")
+		UciPerformance();
 	else if (command == "print")
 		PrintBoard(pos);
 	else if (command == "eval")
@@ -1666,9 +1946,8 @@ static void UciLoop() {
 }
 
 int main(const int argc, const char** argv) {
-	setbuf(stdout, 0);
 	PrintWelcome();
-	InitEval();
+	Init();
 	transposition_table.resize(options.hash);
 	//UciCommand("position startpos moves c2c4 e7e5 b1c3 g8f6 g1f3 b8c6 e2e3 f8b4 d2d4 e5d4 e3d4 e8g8 f1e2 d7d5 e1g1 d5c4 e2c4 c8g4 a2a3 g4f3 d1f3 d8d4 a3b4 d4c4 b4b5 c6d8 a1a4 c4b3 f1d1 f8e8 c1g5 f6d7 g5d8 a8d8 f3d3 d7f8 d3d8 e8d8 d1d8 b3b2 c3d1 b2f6 d8a8 f6e5 d1e3 e5b5 a4a7 b5b1 e3f1 b1b6 f1e3 f7f6 h2h3 g8f7 e3d5 b6b1 g1h2 f8e6 d5c7 e6f4 c7e8 f7g6 a7a4 f4e2 a4a1 b1f5 f2f3 f5e5 h2h1 e2g3 h1h2 b7b5 a1a7 g3e2 h2h1 g6h6 a7d7 b5b4 d7d1 b4b3 e8d6 e2g3 h1g1 e5e2 d6f7 h6g6 f7h8 g6h5 a8d8 b3b2 d8d5 f6f5 h3h4 h5h4 d5d4 f5f4 d4f4 h4h5 f4d4 e2e3 g1h2 b2b1q d4d5 b1f5 h2g3 e3g5 g3f2 f5c2 f2e1 c2d1 d5d1 g5e3 e1f1 e3e8 d1d5 g7g5 d5d4 e8h8 d4e4 h5g6 f1e1 h7h5 e1f1 h5h4 f1e1 h8c3 e1f2 c3c5 f2f1 g6f5 e4g4 c5c1 f1f2 c1d2 f2f1 d2d3 f1f2 d3c2 f2f1 c2c3 f1e2 c3b2 e2f1 b2a3 f1e2 a3a2 e2f1 a2b3 f1e2 b3b5 e2f2 b5e5 f2f1 e5e3 g4e4 e3c1 f1f2 c1b2 f2g1 b2c3 g1f2 c3c5 f2f1 c5b5 f1e1 b5d3 e1f2 d3d6 f2f1 d6a6 f1e1 a6b6 e1f1 b6b1 f1f2 b1c2 f2f1 c2c7 f1e2 c7g3 e4g4 g3h2 e2f1 h2c7 f1e2 f5f6 g4e4 c7g3 e4g4 g3e5 g4e4 e5b2 e2f1 b2c1 f1f2 c1c5 f2f1 c5b5 f1e1 b5b1 e1f2 b1c2 f2g1 c2d1 g1f2 d1d2 f2f1 f6g6 f1g1 d2c1 g1f2 g6h5 e4g4 c1d2 f2f1 d2c3 f1f2 c3b2 f2f1 h4h3 g2h3 b2h2 f1e1 h2h3 e1e2 h3h2 e2e3 h5g6 g4c4 h2e5 e3f2 g6f5 c4g4 e5h2 f2f1 h2d2 g4e4 d2b2 f1g1 b2c1 g1g2 c1c6 g2f2 c6c2 f2g1 c2b2 g1f1 b2d2 f1g1 d2d1 g1f2 d1b3 f2g2 b3b8 g2h3 b8b2 h3g3 b2c2 e4e8 c2c7 g3g2 c7d6 e8e4 d6d3 g2f2 f5f6 f2g2 d3d2 g2g1 d2c2 g1f1 c2h2 e4g4 h2a2 g4e4 f6f5 f1g1 a2a3 g1f2 a3c5 f2g2 c5c3 g2f2 c3d3 f2g2 d3b1 e4e2 b1b7 g2g3 b7a6 e2d2 a6c4 g3f2 c4c5 f2g2 c5e5 d2d7 e5e2 g2g3 e2e3 g3g2 f5e6");
 	//UciCommand("go wtime 1 btime 9146 winc 0 binc 0");
