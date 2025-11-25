@@ -18,6 +18,15 @@ using namespace std;
 #define DATE "2025-07-27"
 #define DEFAULT_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
+struct SSearchInfo {
+	bool stop = false;
+	int depthLimit = MAX_DEPTH;
+	S64 timeStart = 0;
+	S64 timeLimit = 0;
+	U64 nodes = 0;
+	U64 nodesLimit = 0;
+}info;
+
 struct SOptions {
 	int elo = 2500;
 	int eloMin = 0;
@@ -148,15 +157,6 @@ struct Position {
 	U64 ep = 0x0ULL;
 	bool flipped = false;
 }pos;
-
-struct SearchInfo {
-	bool stop = false;
-	int depthLimit = MAX_DEPTH;
-	S64 timeStart = 0;
-	S64 timeLimit = 0;
-	U64 nodes = 0;
-	U64 nodesLimit = 0;
-}info;
 
 struct Move {
 	int from = 0;
@@ -494,6 +494,36 @@ static auto MoveToUci(const Move& move, const int flip) {
 	return str;
 }
 
+static Move UciToMove(string& uci, int flip) {
+	Move m;
+	m.from = (uci[0] - 'a');
+	int f = (uci[1] - '1');
+	m.from += 8 * (flip ? 7 - f : f);
+	m.to = (uci[2] - 'a');
+	f = (uci[3] - '1');
+	m.to += 8 * (flip ? 7 - f : f);
+	m.promo = PT_NB;
+	switch (uci[4]) {
+	case 'N':
+	case 'n':
+		m.promo = KNIGHT;
+		break;
+	case 'B':
+	case 'b':
+		m.promo = BISHOP;
+		break;
+	case 'R':
+	case 'r':
+		m.promo = ROOK;
+		break;
+	case 'Q':
+	case 'q':
+		m.promo = QUEEN;
+		break;
+	}
+	return m;
+}
+
 static int PieceTypeOn(const Position& pos, const int sq) {
 	const U64 bb = 1ULL << sq;
 	for (int i = 0; i < 6; ++i) {
@@ -617,7 +647,7 @@ static auto MakeMove(Position& pos, const Move& move) {
 	return !Attacked(pos, lsb(pos.color[1] & pos.pieces[KING]), false);
 }
 
-void add_move(Move* const movelist, int& num_moves, const int from, const int to, const int promo = PT_NB) {
+static void add_move(Move* const movelist, int& num_moves, const int from, const int to, const int promo = PT_NB) {
 	movelist[num_moves++] = Move{ from, to, promo };
 }
 
@@ -954,7 +984,8 @@ static auto GetHash(const Position& pos) {
 }
 
 static void CheckUp() {
-	if ((info.timeLimit && GetTimeMs() - info.timeStart > info.timeLimit) || (info.nodesLimit && info.nodes > info.nodesLimit))
+	if ((info.timeLimit && (GetTimeMs() - info.timeStart > info.timeLimit)) || 
+		(info.nodesLimit && (info.nodes > info.nodesLimit)))
 		info.stop = true;
 }
 
@@ -979,12 +1010,8 @@ static bool IsPseudolegalMove(const Position& pos, const Move& move) {
 }
 
 static void PrintPv(const Position& pos, const Move move, vector<U64>& hash_history) {
-	// Check move pseudolegality
-	if (!IsPseudolegalMove(pos, move)) {
+	if (!IsPseudolegalMove(pos, move))
 		return;
-	}
-
-	// Check move legality
 	auto npos = pos;
 	if (!MakeMove(npos, move)) {
 		return;
@@ -1416,8 +1443,6 @@ static int SearchAlpha(Position& pos,
 		}
 	}
 	hash_history.pop_back();
-
-	// Return mate or draw scores if no moves found
 	if (best_score == -INF) {
 		return in_check ? ply - MATE_SCORE : 0;
 	}
@@ -1462,9 +1487,7 @@ auto SearchIteratively(Position& pos, vector<U64>& hash_history) {
 		}
 
 		score = newscore;
-
-		// Early exit after completed ply
-		if (!research && GetTimeMs() - info.timeStart > info.timeLimit / 2) {
+		if (!research && info.timeLimit && (GetTimeMs() - info.timeStart > info.timeLimit / 2)) {
 			break;
 		}
 	}
@@ -1562,7 +1585,7 @@ static int GetVal(vector<int> v, int i) {
 	return 0;
 }
 
-static void EvalInit() {
+static void InitEval() {
 	for (int f = FILE_A; f <= FILE_H; ++f)
 		bbAdjacentFiles[f] = (f > FILE_A ? MASK_FILE[f - 1] : 0) | (f < FILE_H ? MASK_FILE[f + 1] : 0);
 	for (int r = RANK_1; r <= RANK_8; ++r)
@@ -1693,18 +1716,35 @@ static void PrintTerm(string name, int idx) {
 }
 
 //function to put thousands separators in the given integer
-string ThousandSeparator(uint64_t n) {
+string ThousandSeparator(U64 n)
+{
 	string ans = "";
+
+	// Convert the given integer
+	// to equivalent string
 	string num = to_string(n);
+
+	// Initialise count
 	int count = 0;
+
+	// Traverse the string in reverse
 	for (int i = (int)num.size() - 1; i >= 0; i--) {
 		ans.push_back(num[i]);
+
+		// If three characters
+		// are traversed
 		if (++count == 3) {
 			ans.push_back(' ');
 			count = 0;
 		}
 	}
+
+	// Reverse the string to get
+	// the desired output
 	reverse(ans.begin(), ans.end());
+
+	// If the given string is
+	// less than 1000
 	if (ans.size() % 4 == 0)
 		ans.erase(ans.begin());
 	return ans;
@@ -1714,11 +1754,11 @@ string ThousandSeparator(uint64_t n) {
 static void PrintSummary(U64 time, U64 nodes) {
 	if (time < 1)
 		time = 1;
-	uint64_t nps = (nodes * 1000) / time;
+	U64 nps = (nodes * 1000) / time;
 	printf("-----------------------------\n");
-	printf("Time        : %11s\n", ThousandSeparator(time));
-	printf("Nodes       : %11s\n", ThousandSeparator(nodes));
-	printf("Nps         : %11s\n", ThousandSeparator(nps));
+	cout << "Time        : " << ThousandSeparator(time) << endl;
+	cout << "Nodes       : " << ThousandSeparator(nodes) << endl;
+	cout << "Nps         : " << ThousandSeparator(nps) << endl;
 	printf("-----------------------------\n");
 }
 
@@ -1791,14 +1831,82 @@ static void UciQuit() {
 	exit(0);
 }
 
-static void UciCommand(string str) {
-	str = trim(str);
-	string value;
-	vector<string> split{};
-	SplitStr(str, split, ' ');
-	if (split.empty())
+static void ParsePosition(string command) {
+	string fen = DEFAULT_FEN;
+	stringstream ss(command);
+	string token;
+	ss >> token;
+	if (token != "position")
 		return;
-	string command = split[0];
+	ss >> token;
+	if (token == "startpos")
+		ss >> token;
+	else if (token == "fen") {
+		fen = "";
+		while (ss >> token && token != "moves")
+			fen += token + " ";
+		fen.pop_back();
+	}
+	SetFen(pos, fen);
+	while (ss >> token) {
+		Move m = UciToMove(token, pos.flipped);
+		MakeMove(pos, m);
+	}
+}
+
+static void ParseGo(string command) {
+	stringstream ss(command);
+	string token;
+	ss >> token;
+	if (token != "go")
+		return;
+	info.stop = false;
+	info.nodes = 0;
+	info.depthLimit = 64;
+	info.nodesLimit = 0;
+	info.timeLimit = 0;
+	info.timeStart = GetTimeMs();
+	int wtime = 0;
+	int btime = 0;
+	int winc = 0;
+	int binc = 0;
+	int movestogo = 32;
+	char* argument = NULL;
+	while (ss >> token) {
+		if (token == "wtime") {
+			ss >> wtime;
+		}
+		else if (token == "btime") {
+			ss >> btime;
+		}
+		else if (token == "winc") {
+			ss >> winc;
+		}
+		else if (token == "binc") {
+			ss >> binc;
+		}
+		else if (token == "movestogo") {
+			ss >> movestogo;
+		}
+		else if (token == "movetime") {
+			ss >> info.timeLimit;
+		}
+		else if (token == "depth") {
+			ss >> info.depthLimit;
+		}
+		else if (token == "nodes") {
+			ss >> info.nodesLimit;
+		}
+	}
+	int time = pos.flipped ? btime : wtime;
+	int inc = pos.flipped ? binc : winc;
+	if (time)
+		info.timeLimit = min(time / movestogo + inc, time / 2);
+}
+
+static void UciCommand(string command) {
+	if (command.empty())
+		return;
 	if (command == "uci")
 	{
 		cout << "id name " << NAME << endl;
@@ -1806,108 +1914,51 @@ static void UciCommand(string str) {
 		cout << "option name hash type spin default " << options.ttMb << " min 1 max 1000" << endl;
 		cout << "uciok" << endl;
 	}
-	else if (command == "setoption")
-	{
-		string name;
-		bool isValue = UciValues(split, "value", value);
-		if (isValue && UciValue(split, "name", name)) {
-			name = StrToLower(name);
-			if (name == "uci_elo") {
-				options.elo = stoi(value);
-				EvalInit();
-			}
-			else if (name == "hash") {
-				options.ttMb = stoi(value);
-				InitTranspositionTable();
-			}
-		}
-	}
-	else if (command == "isready") {
+	else if (command == "isready")
 		cout << "readyok" << endl;
-	}
-	else if (command == "ucinewgame") {
+	else if (command == "ucinewgame")
 		memset(transposition_table.data(), 0, sizeof(TT_Entry) * transposition_table.size());
-	}
-	else if (command == "position") {
+	else if (command.substr(0, 8) == "position") {
 		pos = Position();
 		hash_history.clear();
-		int mark = 0;
-		string pFen = "";
-		vector<string> pMoves = {};
-		for (int i = 1; i < split.size(); i++) {
-			if (mark == 1)
-				pFen += ' ' + split[i];
-			if (mark == 2)
-				pMoves.push_back(split[i]);
-			if (split[i] == "fen")
-				mark = 1;
-			else if (split[i] == "moves")
-				mark = 2;
-		}
-		pFen = trim(pFen);
-		if (!pFen.empty())
-			SetFen(pos, pFen == "" ? DEFAULT_FEN : pFen);
-		Move moves[256];
-		for (string uci : pMoves) {
-			const int num_moves = MoveGen(pos, moves, false);
-			for (int i = 0; i < num_moves; ++i) {
-				if (uci == MoveToUci(moves[i], pos.flipped)) {
-					if (PieceTypeOn(pos, moves[i].to) != PT_NB || PieceTypeOn(pos, moves[i].from) == PAWN) {
-						hash_history.clear();
-					}
-					else {
-						hash_history.emplace_back(GetHash(pos));
-					}
-					MakeMove(pos, moves[i]);
-					break;
-				}
-			}
-		}
+		ParsePosition(command);
 	}
-	else if (command == "go") {
-		int depth = MAX_DEPTH;
-		int nodes = 0;
-		int wtime = 0;
-		int btime = 0;
-		int winc = 0;
-		int binc = 0;
-		int movetime = 0;
-		int movestogo = 32;
-		if (UciValue(split, "depth", value))
-			depth = stoi(value);
-		if (UciValue(split, "nodes", value))
-			nodes = stoi(value);
-		if (UciValue(split, "wtime", value))
-			wtime = stoi(value);
-		if (UciValue(split, "btime", value))
-			btime = stoi(value);
-		if (UciValue(split, "winc", value))
-			winc = stoi(value);
-		if (UciValue(split, "binc", value))
-			binc = stoi(value);
-		if (UciValue(split, "movetime", value))
-			movetime = stoi(value);
-		if (UciValue(split, "movestogo", value))
-			movestogo = stoi(value);
-		int ct = pos.flipped ? btime : wtime;
-		int inc = pos.flipped ? binc : winc;
-		int st = min(ct / movestogo + inc, ct / 2);
-		info.depthLimit = depth;
-		info.nodesLimit = nodes;
-		info.timeLimit = movetime ? movetime : st;
+	else if (command.substr(0, 2) == "go") {
+		ParseGo(command);
 		const Move best_move = SearchIteratively(pos, hash_history);
 		cout << "bestmove " << MoveToUci(best_move, pos.flipped) << endl << flush;
 	}
-	else if (command == "bench")
+	else if (command == "setoption")
+	{
+		string word;
+		cin >> word;
+		cin >> word;
+		word = StrToLower(word);
+		if (word == "uci_elo") {
+			cin >> word;
+			cin >> options.elo;
+			InitEval();
+		}
+		else if (word == "hash") {
+			cin >> word;
+			cin >> options.ttMb;
+			InitTranspositionTable();
+		}
+	}
+	else if (command == "bench") {
 		UciBench();
-	else if (command == "perft")
+	}
+	else if (command == "perft") {
 		UciPerformance();
-	else if (command == "print")
-		PrintBoard(pos);
-	else if (command == "eval")
+	}
+	else if (command == "eval") {
 		UciEval();
+	}
+	else if (command == "print") {
+		PrintBoard(pos);
+	}
 	else if (command == "quit")
-		UciQuit();
+		exit(0);
 }
 
 //main uci loop
@@ -1921,7 +1972,7 @@ static void UciLoop() {
 
 int main(const int argc, const char** argv) {
 	cout << NAME << " " << DATE << endl;
-	EvalInit();
+	InitEval();
 	InitTranspositionTable();
 	UciLoop();
 }
