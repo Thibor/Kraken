@@ -1599,7 +1599,15 @@ static void InitEval() {
 	}
 	int mg, eg;
 	vector<int> split{};
-	int eloMod = 600 - (600 * options.elo) / 2500;
+	int elo = options.elo;
+	if (elo < options.eloMin)
+		elo = options.eloMin;
+	if (elo > options.eloMax)
+		elo = options.eloMax;
+	elo -= options.eloMin;
+	int eloRange = options.eloMax - options.eloMin;
+	int eloMod = QueenValueMg * 2;
+	eloMod -= (eloMod * elo) / eloRange;
 	for (int pt = PAWN; pt < PT_NB; pt++) {
 		mg = PieceValue[0][pt] - eloMod;
 		eg = PieceValue[1][pt];
