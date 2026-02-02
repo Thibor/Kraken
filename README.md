@@ -4,7 +4,7 @@
 <img src="/Resources/Kraken.jpg" />
     <br>
     <br>
-    <b><i>Uci chess engine 2500 elo.</i></b>
+    <b><i>Small uci chess engine 2500 elo.</i></b>
     <br>
     <br>
     <img src="https://img.shields.io/github/downloads/Thibor/Kraken/total?color=critical&style=for-the-badge">
