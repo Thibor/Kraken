@@ -1433,7 +1433,6 @@ static void PrintTerm(string name, int idx) {
 }
 
 static void UciEval() {
-	SetFen(pos, "5rk1/ppp2ppp/8/4pP2/1P2Bb2/2P2K2/8/7R b - - 0 28");
 	PrintBoard(pos);
 	cout << "side " << (pos.flipped ? "black" : "white") << endl;
 	int score = EvalPosition(pos);
