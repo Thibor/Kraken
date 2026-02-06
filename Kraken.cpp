@@ -1294,7 +1294,7 @@ static int SearchAlpha(Position& pos, int alpha, const int beta, int depth, cons
 	return best_score;
 }
 
-static Move SearchIteratively(Position& pos) {
+static void SearchIteratively(Position& pos) {
 	memset(stack, 0, sizeof(stack));
 	TTClear();
 	for (int depth = 1; depth <= info.depthLimit; ++depth) {
@@ -1305,7 +1305,8 @@ static Move SearchIteratively(Position& pos) {
 			break;
 		}
 	}
-	return stack[0].move;
+	if (info.post)
+		cout << "bestmove " << MoveToUci(stack[0].move, pos.flipped) << endl << flush;
 }
 
 static inline void PerftDriver(Position pos, int depth) {
@@ -1509,6 +1510,7 @@ static void ParseGo(string command) {
 	int inc = pos.flipped ? binc : winc;
 	if (time)
 		info.timeLimit = min(time / movestogo + inc, time / 2);
+	SearchIteratively(pos);
 }
 
 static void UciCommand(string command) {
@@ -1527,11 +1529,8 @@ static void UciCommand(string command) {
 		memset(hh_table, 0, sizeof(hh_table));
 	else if (command.substr(0, 8) == "position")
 		ParsePosition(command);
-	else if (command.substr(0, 2) == "go") {
+	else if (command.substr(0, 2) == "go")
 		ParseGo(command);
-		const Move best_move = SearchIteratively(pos);
-		cout << "bestmove " << MoveToUci(best_move, pos.flipped) << endl << flush;
-	}
 	else if (command == "setoption")
 	{
 		string word;
