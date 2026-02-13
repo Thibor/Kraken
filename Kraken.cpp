@@ -596,8 +596,8 @@ static auto MakeMove(Position& pos, const Move& move) {
 	}
 	pos.castling[0] &= !((from | to) & 0x90ULL);
 	pos.castling[1] &= !((from | to) & 0x11ULL);
-	//pos.castling[2] &= !((from | to) & 0x9000000000000000ULL);
-	//pos.castling[3] &= !((from | to) & 0x1100000000000000ULL);
+	pos.castling[2] &= !((from | to) & 0x9000000000000000ULL);
+	pos.castling[3] &= !((from | to) & 0x1100000000000000ULL);
 	FlipPosition(pos);
 	return !IsAttacked(pos, (int)LSB(pos.color[1] & pos.pieces[KING]), false);
 }
