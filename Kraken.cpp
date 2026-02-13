@@ -192,8 +192,7 @@ int outpost[2][2] = {
 	{ S(9, 2), S(15, 5) }  // Bishop
 };
 
-int BonusOrg[PT_NB][RANK_NB][int(FILE_NB) / 2] = {
-	//int BonusOrg[PT_NB][RANK_NB][4] = {
+int BonusOrg[PT_NB][RANK_NB][FILE_NB / 2] = {
 	  { // Pawn
 	   { S(0, 0), S(0,  0), S(0, 0), S(0, 0) },
 	   { S(-11,-3), S(7, -1), S(7, 7), S(17, 2) },
@@ -311,6 +310,8 @@ int hash_count = 0;
 U64 hash_history[1024]{};
 int scores[TERM_NB][2];
 U64 bbDistanceRing[64][8];
+
+void UciCommand(string command);
 
 static void TTClear() {
 	memset(tt.data(), 0, sizeof(TT_Entry) * tt.size());
@@ -601,23 +602,22 @@ static auto MakeMove(Position& pos, const Move& move) {
 	return !IsAttacked(pos, (int)LSB(pos.color[1] & pos.pieces[KING]), false);
 }
 
-static void add_move(Move* const movelist, int& num_moves, const U8 from, const U8 to, const U8 promo = PT_NB) {
+static void AddMove(Move* const movelist, int& num_moves, const U8 from, const U8 to, const U8 promo = PT_NB) {
 	movelist[num_moves++] = Move{ from, to, promo };
 }
 
-static void generate_pawn_moves(Move* const movelist, int& num_moves, U64 to_mask, const int offset) {
+static void GeneratePawnMoves(Move* const movelist, int& num_moves, U64 to_mask, const int offset) {
 	while (to_mask) {
 		const int to = (int)LSB(to_mask);
 		to_mask &= to_mask - 1;
 		if (to >= 56) {
-			add_move(movelist, num_moves, to + offset, to, QUEEN);
-			add_move(movelist, num_moves, to + offset, to, ROOK);
-			add_move(movelist, num_moves, to + offset, to, BISHOP);
-			add_move(movelist, num_moves, to + offset, to, KNIGHT);
+			AddMove(movelist, num_moves, to + offset, to, QUEEN);
+			AddMove(movelist, num_moves, to + offset, to, ROOK);
+			AddMove(movelist, num_moves, to + offset, to, BISHOP);
+			AddMove(movelist, num_moves, to + offset, to, KNIGHT);
 		}
-		else {
-			add_move(movelist, num_moves, to + offset, to);
-		}
+		else
+			AddMove(movelist, num_moves, to + offset, to);
 	}
 }
 
@@ -630,7 +630,7 @@ static void generate_piece_moves(Move* const movelist, int& num_moves, const Pos
 		while (moves) {
 			const int to = LSB(moves);
 			moves &= moves - 1;
-			add_move(movelist, num_moves, fr, to);
+			AddMove(movelist, num_moves, fr, to);
 		}
 	}
 }
@@ -640,13 +640,13 @@ static int MoveGen(const Position& pos, Move* const movelist, const bool only_ca
 	const U64 all = pos.color[0] | pos.color[1];
 	const U64 to_mask = only_captures ? pos.color[1] : ~pos.color[0];
 	const U64 pawns = pos.color[0] & pos.pieces[PAWN];
-	generate_pawn_moves(
+	GeneratePawnMoves(
 		movelist, num_moves, North(pawns) & ~all & (only_captures ? 0xFF00000000000000ULL : 0xFFFFFFFFFFFF0000ULL), -8);
 	if (!only_captures) {
-		generate_pawn_moves(movelist, num_moves, North(North(pawns & 0xFF00ULL) & ~all) & ~all, -16);
+		GeneratePawnMoves(movelist, num_moves, North(North(pawns & 0xFF00ULL) & ~all) & ~all, -16);
 	}
-	generate_pawn_moves(movelist, num_moves, NW(pawns) & (pos.color[1] | pos.ep), -7);
-	generate_pawn_moves(movelist, num_moves, NE(pawns) & (pos.color[1] | pos.ep), -9);
+	GeneratePawnMoves(movelist, num_moves, NW(pawns) & (pos.color[1] | pos.ep), -7);
+	GeneratePawnMoves(movelist, num_moves, NE(pawns) & (pos.color[1] | pos.ep), -9);
 	generate_piece_moves(movelist, num_moves, pos, KNIGHT, to_mask, KnightAttack);
 	generate_piece_moves(movelist, num_moves, pos, BISHOP, to_mask, BishopAttack);
 	generate_piece_moves(movelist, num_moves, pos, QUEEN, to_mask, BishopAttack);
@@ -654,10 +654,10 @@ static int MoveGen(const Position& pos, Move* const movelist, const bool only_ca
 	generate_piece_moves(movelist, num_moves, pos, QUEEN, to_mask, RookAttack);
 	generate_piece_moves(movelist, num_moves, pos, KING, to_mask, KingAttack);
 	if (!only_captures && pos.castling[0] && !(all & 0x60ULL) && !IsAttacked(pos, 4) && !IsAttacked(pos, 5)) {
-		add_move(movelist, num_moves, 4, 6);
+		AddMove(movelist, num_moves, 4, 6);
 	}
 	if (!only_captures && pos.castling[1] && !(all & 0xEULL) && !IsAttacked(pos, 4) && !IsAttacked(pos, 3)) {
-		add_move(movelist, num_moves, 4, 2);
+		AddMove(movelist, num_moves, 4, 2);
 	}
 	return num_moves;
 }
@@ -735,8 +735,7 @@ static bool CheckUp() {
 		if (InputAvailable()) {
 			string line;
 			getline(cin, line);
-			if (line == "stop")
-				info.stop = true;
+			UciCommand(line);
 		}
 	}
 	return info.stop;
@@ -1281,7 +1280,7 @@ static int SearchAlpha(Position& pos, int alpha, const int beta, int depth, cons
 		moves_evaluated[num_moves_evaluated++] = move;
 		if (!gain)
 			num_moves_quiets++;
-		if (!in_check && alpha == beta - 1 && num_moves_quiets > 1 + depth * depth >> !improving)
+		if (!in_check && alpha == beta - 1 && num_moves_quiets > (1 + depth * depth) >> (int)!improving)
 			break;
 	}
 	hash_count--;
@@ -1300,9 +1299,8 @@ static void SearchIteratively(Position& pos) {
 		SearchAlpha(pos, -MATE, MATE, depth, 0, stack);
 		if (info.stop)
 			break;
-		if (info.timeLimit && GetTimeMs() - info.timeStart > info.timeLimit / 2) {
+		if (info.timeLimit && GetTimeMs() - info.timeStart > info.timeLimit / 2)
 			break;
-		}
 	}
 	if (info.post)
 		cout << "bestmove " << MoveToUci(stack[0].move, pos.flipped) << endl << flush;
@@ -1511,7 +1509,7 @@ static void ParseGo(string command) {
 	SearchIteratively(pos);
 }
 
-static void UciCommand(string command) {
+void UciCommand(string command) {
 	if (command.empty())
 		return;
 	if (command == "uci")
@@ -1566,7 +1564,7 @@ static void UciLoop() {
 	}
 }
 
-void InitHash() {
+static void InitHash() {
 	mt19937_64 r;
 	for (U64& k : keys)
 		k = r();
