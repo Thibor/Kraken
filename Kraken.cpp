@@ -8,9 +8,9 @@
 
 using namespace std;
 
-#define MAX_DEPTH 100
-#define MATE 30000
-#define INF 32000
+#define MAX_PLY 64
+#define MATE 32000
+#define INF 32001
 #define U8 unsigned __int8
 #define S16 signed __int16
 #define U16 unsigned __int16
@@ -23,7 +23,7 @@ using namespace std;
 
 enum Color { WHITE, BLACK, COLOR_NB };
 enum PieceType { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, PT_NB };
-enum Bound { LOWER,UPPER, EXACT };
+enum Bound { LOWER, UPPER, EXACT };
 enum Phase { MG, EG, PHASE_NB };
 enum Term { PASSED = 6, STRUCTURE, TERM_NB };
 
@@ -100,11 +100,11 @@ static constexpr File operator~(File& f) {
 enum Rank : int { RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8, RANK_NB };
 
 struct Position {
-	int castling[4]{};
-	U64 color[2]{};
-	U64 pieces[6]{};
-	U64 ep = 0x0ULL;
-	bool flipped = false;
+	bool flipped;
+	U64 castling[4];
+	U64 color[2];
+	U64 pieces[6];
+	U64 ep;
 }pos;
 
 struct Move {
@@ -135,7 +135,7 @@ struct TT_Entry {
 struct SSearchInfo {
 	bool post = true;
 	bool stop = false;
-	int depthLimit = MAX_DEPTH;
+	int depthLimit = MAX_PLY;
 	S64 timeStart = 0;
 	S64 timeLimit = 0;
 	U64 nodes = 0;
@@ -312,11 +312,11 @@ U64 hash_history[1024]{};
 int scores[TERM_NB][2];
 U64 bbDistanceRing[64][8];
 
-void TTClear() {
+static void TTClear() {
 	memset(tt.data(), 0, sizeof(TT_Entry) * tt.size());
 }
 
-void TTInit() {
+static void TTInit() {
 	tt_count = (options.ttMb * 1000000) / sizeof(TT_Entry);
 	tt.resize(tt_count);
 	TTClear();
@@ -428,9 +428,8 @@ static int TotalScore(int c) {
 static void FlipPosition(Position& pos) {
 	pos.color[0] = Flip(pos.color[0]);
 	pos.color[1] = Flip(pos.color[1]);
-	for (int i = 0; i < 6; ++i) {
+	for (int i = 0; i < 6; ++i)
 		pos.pieces[i] = Flip(pos.pieces[i]);
-	}
 	pos.ep = Flip(pos.ep);
 	swap(pos.color[0], pos.color[1]);
 	swap(pos.castling[0], pos.castling[2]);
@@ -498,11 +497,11 @@ static int PieceTypeOn(const Position& pos, const int sq) {
 	return PT_NB;
 }
 
-static void ResetInfo(){
+static void ResetInfo() {
 	info.post = true;
 	info.stop = false;
 	info.nodes = 0;
-	info.depthLimit = MAX_DEPTH;
+	info.depthLimit = MAX_PLY;
 	info.nodesLimit = 0;
 	info.timeLimit = 0;
 	info.timeStart = GetTimeMs();
@@ -596,8 +595,8 @@ static auto MakeMove(Position& pos, const Move& move) {
 	}
 	pos.castling[0] &= !((from | to) & 0x90ULL);
 	pos.castling[1] &= !((from | to) & 0x11ULL);
-	pos.castling[2] &= !((from | to) & 0x9000000000000000ULL);
-	pos.castling[3] &= !((from | to) & 0x1100000000000000ULL);
+	//pos.castling[2] &= !((from | to) & 0x9000000000000000ULL);
+	//pos.castling[3] &= !((from | to) & 0x1100000000000000ULL);
 	FlipPosition(pos);
 	return !IsAttacked(pos, (int)LSB(pos.color[1] & pos.pieces[KING]), false);
 }
@@ -760,7 +759,7 @@ static void PrintPv(const Position& pos, const Move move) {
 		return;
 	cout << " " << MoveToUci(move, pos.flipped);
 	const U64 tt_key = GetHash(npos);
-	const TT_Entry& tt_entry = tt [tt_key % tt_count];
+	const TT_Entry& tt_entry = tt[tt_key % tt_count];
 	if (tt_entry.key != tt_key || tt_entry.move == Move{} || tt_entry.flag != EXACT) {
 		return;
 	}
@@ -848,7 +847,7 @@ static void PrintSummary(U64 time, U64 nodes) {
 	U64 nps = (nodes * 1000) / time;
 	const char* units[] = { "", "k", "m", "g" };
 	int sn = ShrinkNumber(nps);
-	U64 p = pow(10, sn * 3);
+	U64 p = (U64)pow(10, sn * 3);
 	printf("-----------------------------\n");
 	printf("Time        : %llu\n", time);
 	printf("Nodes       : %llu\n", nodes);
@@ -1248,7 +1247,7 @@ static int SearchAlpha(Position& pos, int alpha, const int beta, int depth, cons
 			if (!ply && info.post) {
 				cout << "info";
 				cout << " depth " << depth;
-				if (abs(score) < MATE - MAX_DEPTH)
+				if (abs(score) < MATE - MAX_PLY)
 					cout << " score cp " << score;
 				else
 					cout << " score mate " << (score > 0 ? (MATE - score + 1) >> 1 : -(MATE + score) >> 1);
@@ -1269,7 +1268,7 @@ static int SearchAlpha(Position& pos, int alpha, const int beta, int depth, cons
 				hh_table[pos.flipped][!gain][move.from][move.to] +=
 					depth * depth - depth * depth * hh_table[pos.flipped][!gain][move.from][move.to] / 512;
 				for (S32 j = 0; j < num_moves_evaluated; ++j) {
-					const S32 prev_gain =max_material[moves_evaluated[j].promo] + max_material[PieceTypeOn(pos, moves_evaluated[j].to)];
+					const S32 prev_gain = max_material[moves_evaluated[j].promo] + max_material[PieceTypeOn(pos, moves_evaluated[j].to)];
 					hh_table[pos.flipped][!prev_gain][moves_evaluated[j].from][moves_evaluated[j].to] -=
 						depth * depth +
 						depth * depth *
@@ -1394,7 +1393,7 @@ static void UciBench() {
 }
 
 //start performance test
-static void UciPerformance(){
+static void UciPerformance() {
 	ResetInfo();
 	PrintPerformanceHeader();
 	int depth = 0;
@@ -1567,11 +1566,15 @@ static void UciLoop() {
 	}
 }
 
-int main(const int argc, const char** argv) {
-	cout << NAME << " " << VERSION << endl;
+void InitHash() {
 	mt19937_64 r;
 	for (U64& k : keys)
 		k = r();
+}
+
+int main(const int argc, const char** argv) {
+	cout << NAME << " " << VERSION << endl;
+	InitHash();
 	SetFen(pos, START_FEN);
 	EvalInit();
 	TTInit();
