@@ -23,7 +23,7 @@ using namespace std;
 
 enum Color { WHITE, BLACK, COLOR_NB };
 enum PieceType { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, PT_NB };
-enum Bound { LOWER, UPPER, EXACT };
+enum Bound { UPPER,LOWER, EXACT };
 enum Phase { MG, EG, PHASE_NB };
 enum Term { PASSED = 6, STRUCTURE, TERM_NB };
 
@@ -55,7 +55,7 @@ constexpr Value operator-(Value v, int i) { return Value(int(v) - i); }
 inline Value& operator+=(Value& v, int i) { return v = v + i; }
 inline Value& operator-=(Value& v, int i) { return v = v - i; }
 
-int PieceValue[PHASE_NB][PT_NB] = {
+Value PieceValue[PHASE_NB][PT_NB] = {
   { PawnValueMg, KnightValueMg, BishopValueMg, RookValueMg, QueenValueMg },
   { PawnValueEg, KnightValueEg, BishopValueEg, RookValueEg, QueenValueEg }
 };
@@ -85,27 +85,38 @@ constexpr U64 queenSide = FileABB | FileBBB | FileCBB | FileDBB;
 constexpr U64 centerFiles = FileCBB | FileDBB | FileEBB | FileFBB;
 constexpr U64 kingSide = FileEBB | FileFBB | FileGBB | FileHBB;
 constexpr U64 center = (FileDBB | FileEBB) & (Rank4BB | Rank5BB);
-const U64 MASK_FILE[8] = {
-	0x101010101010101, 0x202020202020202, 0x404040404040404, 0x808080808080808,
-	0x1010101010101010, 0x2020202020202020, 0x4040404040404040, 0x8080808080808080
-};
 enum File : int { FILE_A, FILE_B, FILE_C, FILE_D, FILE_E, FILE_F, FILE_G, FILE_H, FILE_NB };
-
-static constexpr File operator++(File& f) { return f = File(int(f) + 1); }
-
-static constexpr File operator~(File& f) {
-	return File(f ^ FILE_H); // Horizontal flip FILE_A -> FILE_H
-}
-
 enum Rank : int { RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8, RANK_NB };
+U64 bbRanks[RANK_NB] = {
+	0x00000000000000ffULL,
+	0x000000000000ff00ULL,
+	0x0000000000ff0000ULL,
+	0x00000000ff000000ULL,
+	0x000000ff00000000ULL,
+	0x0000ff0000000000ULL,
+	0x00ff000000000000ULL,
+	0xff00000000000000ULL };
+
+U64 bbFiles[FILE_NB] = {
+	0x0101010101010101ULL,
+	0x0202020202020202ULL,
+	0x0404040404040404ULL,
+	0x0808080808080808ULL,
+	0x1010101010101010ULL,
+	0x2020202020202020ULL,
+	0x4040404040404040ULL,
+	0x8080808080808080ULL };
+static constexpr File operator++(File& f) { return f = File(int(f) + 1); }
+static constexpr File operator~(File& f) {return File(f ^ FILE_H);}
 
 struct Position {
 	bool flipped;
+	int move50;
 	U64 castling[4];
 	U64 color[2];
 	U64 pieces[6];
 	U64 ep;
-}pos;
+};
 
 struct Move {
 	U8 from = 0;
@@ -176,12 +187,12 @@ int Doubled = S(11, 56);
 int Isolated = S(5, 15);
 
 // PassedRank[Rank] contains a bonus according to the rank of a passed pawn
-int PassedRank[RANK_NB] = {
+int passedRank[RANK_NB] = {
   S(0, 0), S(5, 18), S(12, 23), S(10, 31), S(57, 62), S(163, 167), S(271, 250)
 };
 
 // PassedFile[File] contains a bonus according to the file of a passed pawn
-int PassedFile[FILE_NB] = {
+int passedFile[FILE_NB] = {
   S(-1,  7), S(0,  9), S(-9, -8), S(-30,-14),S(-30,-14), S(-9, -8), S(0,  9), S(-1,  7)
 };
 
@@ -297,30 +308,23 @@ constexpr Value UnblockedStorm[int(FILE_NB) / 2][RANK_NB] = {
 
 U64 filesBB[8] = { FileABB,FileBBB,FileCBB,FileDBB,FileEBB,FileFBB,FileGBB,FileHBB };
 U64 bbAdjacentFiles[FILE_NB];
-U64 bbRanks[RANK_NB];
-U64 bbFiles[FILE_NB];
 U64 bbForwardRanks[RANK_NB];
 
 U64 tt_count = 64ULL << 15;
 vector<TT_Entry> tt;
 U64 keys[848];
-Stack stack[128]{};
-S32 hh_table[2][2][64][64]{};
+Stack ss[128]{};
+S32 hh[2][2][64][64]{};
 int hash_count = 0;
 U64 hash_history[1024]{};
 int scores[TERM_NB][2];
 U64 bbDistanceRing[64][8];
 
-void UciCommand(string command);
-
-static void TTClear() {
-	memset(tt.data(), 0, sizeof(TT_Entry) * tt.size());
-}
+void UciCommand(Position& pos, string command);
 
 static void TTInit() {
 	tt_count = (options.ttMb * 1000000) / sizeof(TT_Entry);
 	tt.resize(tt_count);
-	TTClear();
 }
 
 static bool IsRepetition(U64 hash) {
@@ -384,11 +388,11 @@ static U64 SE(const U64 bb) {
 	return South(East(bb));
 }
 
-U64 Span(U64 bb) {
+static U64 SpanSouth(U64 bb) {
 	return bb | bb >> 8 | bb >> 16 | bb >> 24 | bb >> 32;
 }
 
-U64 SpanNorth(U64 bb) {
+static U64 SpanNorth(U64 bb) {
 	return bb | bb << 8 | bb << 16 | bb << 24 | bb << 32;
 }
 
@@ -571,6 +575,7 @@ static auto MakeMove(Position& pos, const Move& move) {
 	const int captured = PieceTypeOn(pos, move.to);
 	const U64 to = 1ULL << move.to;
 	const U64 from = 1ULL << move.from;
+	pos.move50 = captured != PT_NB || piece == PAWN ? 0 : pos.move50++;
 	pos.color[0] ^= from | to;
 	pos.pieces[piece] ^= from | to;
 	if (piece == PAWN && to == pos.ep) {
@@ -594,10 +599,10 @@ static auto MakeMove(Position& pos, const Move& move) {
 		pos.pieces[PAWN] ^= to;
 		pos.pieces[move.promo] ^= to;
 	}
-	pos.castling[0] &= !((from | to) & 0x90ULL);
-	pos.castling[1] &= !((from | to) & 0x11ULL);
-	pos.castling[2] &= !((from | to) & 0x9000000000000000ULL);
-	pos.castling[3] &= !((from | to) & 0x1100000000000000ULL);
+	pos.castling[0] &= ((from | to) & 0x90ULL) == 0;
+	pos.castling[1] &= ((from | to) & 0x11ULL) == 0;
+	pos.castling[2] &= ((from | to) & 0x9000000000000000ULL) == 0;
+	pos.castling[3] &= ((from | to) & 0x1100000000000000ULL) == 0;
 	FlipPosition(pos);
 	return !IsAttacked(pos, (int)LSB(pos.color[1] & pos.pieces[KING]), false);
 }
@@ -611,10 +616,10 @@ static void GeneratePawnMoves(Move* const movelist, int& num_moves, U64 to_mask,
 		const int to = (int)LSB(to_mask);
 		to_mask &= to_mask - 1;
 		if (to >= 56) {
-			AddMove(movelist, num_moves, to + offset, to, QUEEN);
-			AddMove(movelist, num_moves, to + offset, to, ROOK);
-			AddMove(movelist, num_moves, to + offset, to, BISHOP);
 			AddMove(movelist, num_moves, to + offset, to, KNIGHT);
+			AddMove(movelist, num_moves, to + offset, to, BISHOP);
+			AddMove(movelist, num_moves, to + offset, to, ROOK);
+			AddMove(movelist, num_moves, to + offset, to, QUEEN);
 		}
 		else
 			AddMove(movelist, num_moves, to + offset, to);
@@ -726,7 +731,7 @@ static bool InputAvailable() {
 	return dw > 1;
 }
 
-static bool CheckUp() {
+static bool CheckUp(Position& pos) {
 	if ((++info.nodes & 0xffff) == 0) {
 		if (info.timeLimit && GetTimeMs() - info.timeStart > info.timeLimit)
 			info.stop = true;
@@ -735,7 +740,7 @@ static bool CheckUp() {
 		if (InputAvailable()) {
 			string line;
 			getline(cin, line);
-			UciCommand(line);
+			UciCommand(pos, line);
 		}
 	}
 	return info.stop;
@@ -759,7 +764,8 @@ static void PrintPv(const Position& pos, const Move move) {
 	cout << " " << MoveToUci(move, pos.flipped);
 	const U64 tt_key = GetHash(npos);
 	const TT_Entry& tt_entry = tt[tt_key % tt_count];
-	if (tt_entry.key != tt_key || tt_entry.move == Move{} || tt_entry.flag != EXACT) {
+	//if (tt_entry.key != tt_key || tt_entry.move == Move{} || tt_entry.flag != EXACT) {
+		if (tt_entry.key != tt_key || tt_entry.flag == LOWER) {
 		return;
 	}
 	if (IsRepetition(tt_key))
@@ -895,7 +901,7 @@ static int EvalPosition(Position& pos) {
 		const U64 bbPawnsEn = pos.color[1] & pos.pieces[PAWN];
 		const U64 bbPawnDefense = NW(bbPawnsUs) | NE(bbPawnsUs);
 		const U64 bbPawnAttack = SE(bbPawnsEn) | SW(bbPawnsEn);
-		const U64 bbSpan = Span(bbPawnAttack);
+		const U64 bbSpan = SpanSouth(bbPawnAttack);
 		const U64 bbOutpost = ~bbSpan & bbOutpostRanks;
 		const Square sqKUs = LSB(pos.color[0] & pos.pieces[KING]);
 		const Square sqKEn = LSB(pos.color[1] & pos.pieces[KING]);
@@ -917,12 +923,12 @@ static int EvalPosition(Position& pos) {
 				const U64 bbPiece = 1ULL << sq;
 				if (pt == PAWN) {
 					// Passed pawns
-					U64 bbFile = 0x101010101010101ULL << file;
+					U64 bbFile = bbFiles[file];
 					U64 bbForward = 0x101010101010100ULL << sq;
 					U64 blockers = bbForward | West(bbForward) | East(bbForward);
 					if (!(blockers & bbPawnsEn)) {
-						int passed = PassedFile[file];
-						passed += PassedRank[rank];
+						int passed = passedFile[file];
+						passed += passedRank[rank];
 						if (rank > RANK_3)
 						{
 							int w = (rank - 2) * (rank - 2) + 2;
@@ -946,7 +952,7 @@ static int EvalPosition(Position& pos) {
 					else {
 						U64 bbFront = North(bbPiece);
 						bbFront |= NE(bbFront) | NW(bbFront);
-						U64 bbBack = Span(South(East(bbPiece) | West(bbPiece)));
+						U64 bbBack = SpanSouth(South(East(bbPiece) | West(bbPiece)));
 						if ((!(bbBack & bbPawnsUs)) && (bbFront & bbPawnsEn)) {
 							structure -= Backward;
 						}
@@ -973,7 +979,8 @@ static int EvalPosition(Position& pos) {
 		FlipPosition(pos);
 		score = -score;
 	}
-	return (Mg(score) * phase + Eg(score) * (24 - phase)) / 24;
+	score= (Mg(score) * phase + Eg(score) * (24 - phase)) / 24;
+	return (100 - pos.move50) * score / 100;
 }
 
 static string StrToLower(string s) {
@@ -1011,11 +1018,7 @@ static int GetVal(vector<int> v, int i) {
 
 static void EvalInit() {
 	for (int f = FILE_A; f <= FILE_H; ++f)
-		bbAdjacentFiles[f] = (f > FILE_A ? MASK_FILE[f - 1] : 0) | (f < FILE_H ? MASK_FILE[f + 1] : 0);
-	for (int r = RANK_1; r <= RANK_8; ++r)
-		bbRanks[r] = 0xFFULL << (r * 8);
-	for (int f = FILE_A; f <= FILE_H; ++f)
-		bbFiles[f] = FileABB << f;
+		bbAdjacentFiles[f] = (f > FILE_A ? bbFiles[f - 1] : 0) | (f < FILE_H ? bbFiles[f + 1] : 0);
 	U64 bb = ~0ULL;
 	for (int r = RANK_1; r <= RANK_8; ++r) {
 		bb &= ~bbRanks[r];
@@ -1076,8 +1079,8 @@ static void EvalInit() {
 			}
 }
 
-static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int ply, Stack* const stack, const bool do_null = true) {
-	if (CheckUp())
+static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int ply, Stack* const ss, const bool do_null = true) {
+	if (CheckUp(pos))
 		return 0;
 	int  mate_value = MATE - ply;
 	if (alpha < -mate_value) alpha = -mate_value;
@@ -1085,9 +1088,9 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 	if (alpha >= beta) return alpha;
 
 	int static_eval = EvalPosition(pos);
-	if (ply > 127)
+	if (ply >= MAX_PLY)
 		return static_eval;
-	stack[ply].score = static_eval;
+	ss[ply].score = static_eval;
 
 	// Check extensions
 	const S32 in_check = IsAttacked(pos, LSB(pos.color[0] & pos.pieces[KING]));
@@ -1096,8 +1099,8 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 	bool in_qsearch = depth <= 0;
 	const U64 tt_key = GetHash(pos);
 
-	if (ply > 0 && !in_qsearch)
-		if (IsRepetition(tt_key))
+	if (ply && !in_qsearch)
+		if (pos.move50 >= 100 || IsRepetition(tt_key))
 			return 0;
 
 	// TT Probing
@@ -1118,7 +1121,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 	else
 		depth -= depth > 3;
 
-	const S32 improving = ply > 1 && static_eval > stack[ply - 2].score;
+	const S32 improving = ply > 1 && static_eval > ss[ply - 2].score;
 
 	// If static_eval > tt_entry.score, tt_entry.flag cannot be Lower (ie must be Upper or Exact).
 	// Otherwise, tt_entry.flag cannot be Upper (ie must be Lower or Exact).
@@ -1141,7 +1144,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 		}
 
 		// Null move pruning
-		if (depth > 2 && static_eval >= beta && static_eval >= stack[ply].score && do_null &&
+		if (depth > 2 && static_eval >= beta && static_eval >= ss[ply].score && do_null &&
 			pos.color[0] & ~pos.pieces[PAWN] & ~pos.pieces[KING]) {
 			Position npos = pos;
 			FlipPosition(npos);
@@ -1151,7 +1154,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 				-alpha,
 				depth - 4 - depth / 5 - min((static_eval - beta) / 196, 3),
 				ply + 1,
-				stack,
+				ss,
 				false) >= beta)
 				return beta;
 		}
@@ -1165,9 +1168,9 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 	S32 best_score = in_qsearch ? static_eval : -INF;
 	auto best_move = tt_move;
 
-	auto& moves = stack[ply].moves;
-	auto& moves_scores = stack[ply].moves_scores;
-	auto& moves_evaluated = stack[ply].moves_evaluated;
+	auto& moves = ss[ply].moves;
+	auto& moves_scores = ss[ply].moves_scores;
+	auto& moves_evaluated = ss[ply].moves_evaluated;
 	const S32 num_moves = MoveGen(pos, moves, in_qsearch);
 
 	for (S32 i = 0; i < num_moves; ++i) {
@@ -1176,8 +1179,8 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 		if (i == !(no_move == tt_move))
 			for (S32 j = 0; j < num_moves; ++j) {
 				const S32 gain = max_material[moves[j].promo] + max_material[PieceTypeOn(pos, moves[j].to)];
-				moves_scores[j] = hh_table[pos.flipped][!gain][moves[j].from][moves[j].to] +
-					(gain || moves[j] == stack[ply].killer) * 2048 + gain;
+				moves_scores[j] = hh[pos.flipped][!gain][moves[j].from][moves[j].to] +
+					(gain || moves[j] == ss[ply].killer) * 2048 + gain;
 			}
 
 		// Find best move remaining
@@ -1213,7 +1216,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 		S32 score;
 		S32 reduction = depth > 3 && num_moves_evaluated > 1
 			? max(num_moves_evaluated / 13 + depth / 14 + (alpha == beta - 1) + !improving -
-				min(max(hh_table[pos.flipped][!gain][move.from][move.to] / 128, -2), 2),
+				min(max(hh[pos.flipped][!gain][move.from][move.to] / 128, -2), 2),
 				0)
 			: 0;
 
@@ -1223,7 +1226,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 				-alpha,
 				depth - reduction - 1,
 				ply + 1,
-				stack)) > alpha &&
+				ss)) > alpha &&
 			reduction > 0)
 			reduction = 0;
 
@@ -1233,7 +1236,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 				-alpha,
 				depth - 1,
 				ply + 1,
-				stack);
+				ss);
 
 		// Exit early if out of time
 		if (info.stop)
@@ -1246,7 +1249,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 			best_move = move;
 			tt_flag = EXACT;
 			alpha = score;
-			stack[ply].move = move;
+			ss[ply].move = move;
 			if (!ply && info.post) {
 				cout << "info";
 				cout << " depth " << depth;
@@ -1259,23 +1262,23 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 				cout << " nodes " << info.nodes;
 				cout << " hashfull " << Permill();
 				cout << " pv";
-				PrintPv(pos, stack[0].move);
+				PrintPv(pos, ss[0].move);
 				cout << endl;
 			}
 			if (score >= beta) {
 				tt_flag = UPPER;
 
 				if (!gain)
-					stack[ply].killer = move;
+					ss[ply].killer = move;
 
-				hh_table[pos.flipped][!gain][move.from][move.to] +=
-					depth * depth - depth * depth * hh_table[pos.flipped][!gain][move.from][move.to] / 512;
+				hh[pos.flipped][!gain][move.from][move.to] +=
+					depth * depth - depth * depth * hh[pos.flipped][!gain][move.from][move.to] / 512;
 				for (S32 j = 0; j < num_moves_evaluated; ++j) {
 					const S32 prev_gain = max_material[moves_evaluated[j].promo] + max_material[PieceTypeOn(pos, moves_evaluated[j].to)];
-					hh_table[pos.flipped][!prev_gain][moves_evaluated[j].from][moves_evaluated[j].to] -=
+					hh[pos.flipped][!prev_gain][moves_evaluated[j].from][moves_evaluated[j].to] -=
 						depth * depth +
 						depth * depth *
-						hh_table[pos.flipped][!prev_gain][moves_evaluated[j].from][moves_evaluated[j].to] / 512;
+						hh[pos.flipped][!prev_gain][moves_evaluated[j].from][moves_evaluated[j].to] / 512;
 				}
 				break;
 			}
@@ -1297,20 +1300,21 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 }
 
 static void SearchIteratively(Position& pos) {
-	memset(stack, 0, sizeof(stack));
-	TTClear();
+	memset(ss, 0, sizeof(ss));
+	memset(tt.data(), 0, sizeof(TT_Entry) * tt.size());
+	memset(hh, 0, sizeof(hh));
 	for (int depth = 1; depth <= info.depthLimit; ++depth) {
-		SearchAlpha(pos, -MATE, MATE, depth, 0, stack);
+		SearchAlpha(pos, -MATE, MATE, depth, 0, ss);
 		if (info.stop)
 			break;
 		if (info.timeLimit && GetTimeMs() - info.timeStart > info.timeLimit / 2)
 			break;
 	}
 	if (info.post)
-		cout << "bestmove " << MoveToUci(stack[0].move, pos.flipped) << endl << flush;
+		cout << "bestmove " << MoveToUci(ss[0].move, pos.flipped) << endl << flush;
 }
 
-static inline void PerftDriver(Position pos, int depth) {
+static inline void PerftDriver(Position& pos, int depth) {
 	Move list[256];
 	const S32 num_moves = MoveGen(pos, list, false);
 	for (int n = 0; n < num_moves; n++) {
@@ -1366,6 +1370,8 @@ static void SetFen(Position& pos, const string& fen) {
 		const int sq = word[0] - 'a' + 8 * (word[1] - '1');
 		pos.ep = 1ULL << sq;
 	}
+	ss >> word;
+	pos.move50 = stoi(word);
 	if (black_move)
 		FlipPosition(pos);
 }
@@ -1377,10 +1383,9 @@ void PrintPerformanceHeader() {
 }
 
 //start benchmark
-static void UciBench() {
+static void UciBench(Position& pos) {
 	ResetInfo();
 	PrintPerformanceHeader();
-	SetFen(pos, START_FEN);
 	info.depthLimit = 0;
 	info.post = false;
 	S64 elapsed = 0;
@@ -1395,14 +1400,13 @@ static void UciBench() {
 }
 
 //start performance test
-static void UciPerformance() {
+static void UciPerformance(Position& pos) {
 	ResetInfo();
 	PrintPerformanceHeader();
 	int depth = 0;
-	SetFen(pos, START_FEN);
 	while (GetTimeMs() - info.timeStart < 3000)
 	{
-		PerftDriver(pos, ++depth);
+		PerftDriver(pos, depth++);
 		printf("%2d. %8llu %12llu\n", depth, GetTimeMs() - info.timeStart, info.nodes);
 	}
 	PrintSummary(GetTimeMs() - info.timeStart, info.nodes);
@@ -1433,7 +1437,7 @@ static void PrintTerm(string name, int idx) {
 	std::cout << ShowScore(name) << ShowScore(sw) << " " << ShowScore(sb) << " " << ShowScore(sw - sb) << endl;
 }
 
-static void UciEval() {
+static void UciEval(Position& pos) {
 	PrintBoard(pos);
 	cout << "side " << (pos.flipped ? "black" : "white") << endl;
 	int score = EvalPosition(pos);
@@ -1449,7 +1453,7 @@ static void UciEval() {
 	cout << "score " << score << endl;
 }
 
-static void ParsePosition(string command) {
+static void ParsePosition(Position& pos, string command) {
 	string fen = START_FEN;
 	stringstream ss(command);
 	string token;
@@ -1476,7 +1480,7 @@ static void ParsePosition(string command) {
 	}
 }
 
-static void ParseGo(string command) {
+static void ParseGo(Position& pos, string command) {
 	stringstream ss(command);
 	string token;
 	ss >> token;
@@ -1513,24 +1517,18 @@ static void ParseGo(string command) {
 	SearchIteratively(pos);
 }
 
-void UciCommand(string command) {
-	if (command.empty())
-		return;
-	if (command == "uci")
-	{
+void UciCommand(Position& pos, string command) {
+	if (command == "uci"){
 		cout << "id name " << NAME << endl;
 		cout << "option name UCI_Elo type spin default " << options.eloMax << " min " << options.eloMin << " max " << options.eloMax << endl;
 		cout << "option name hash type spin default " << options.ttMb << " min 1 max 1000" << endl;
 		cout << "uciok" << endl;
 	}
-	else if (command == "isready")
-		cout << "readyok" << endl;
-	else if (command == "ucinewgame")
-		memset(hh_table, 0, sizeof(hh_table));
+	else if (command == "isready")cout << "readyok" << endl;
 	else if (command.substr(0, 8) == "position")
-		ParsePosition(command);
+		ParsePosition(pos, command);
 	else if (command.substr(0, 2) == "go")
-		ParseGo(command);
+		ParseGo(pos, command);
 	else if (command == "setoption")
 	{
 		string word;
@@ -1548,23 +1546,19 @@ void UciCommand(string command) {
 			TTInit();
 		}
 	}
-	else if (command == "bench")
-		UciBench();
-	else if (command == "perft")
-		UciPerformance();
-	else if (command == "eval")
-		UciEval();
-	else if (command == "print")
-		PrintBoard(pos);
-	else if (command == "quit")
-		exit(0);
+	else if (command == "bench")UciBench(pos);
+	else if (command == "perft")UciPerformance(pos);
+	else if (command == "eval")UciEval(pos);
+	else if (command == "print")PrintBoard(pos);
+	else if (command == "stop")info.stop=true;
+	else if (command == "quit")exit(0);
 }
 
-static void UciLoop() {
+static void UciLoop(Position& pos) {
 	string line;
 	while (true) {
 		getline(cin, line);
-		UciCommand(line);
+		UciCommand(pos, line);
 	}
 }
 
@@ -1575,10 +1569,11 @@ static void InitHash() {
 }
 
 int main(const int argc, const char** argv) {
+	Position pos;
 	cout << NAME << " " << VERSION << endl;
 	InitHash();
 	SetFen(pos, START_FEN);
 	EvalInit();
 	TTInit();
-	UciLoop();
+	UciLoop(pos);
 }
