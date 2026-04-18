@@ -23,7 +23,7 @@ using namespace std;
 
 enum Color { WHITE, BLACK, COLOR_NB };
 enum PieceType { PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING, PT_NB };
-enum Bound { UPPER,LOWER, EXACT };
+enum Bound { UPPER, LOWER, EXACT };
 enum Phase { MG, EG, PHASE_NB };
 enum Term { PASSED = 6, STRUCTURE, TERM_NB };
 
@@ -107,7 +107,7 @@ U64 bbFiles[FILE_NB] = {
 	0x4040404040404040ULL,
 	0x8080808080808080ULL };
 static constexpr File operator++(File& f) { return f = File(int(f) + 1); }
-static constexpr File operator~(File& f) {return File(f ^ FILE_H);}
+static constexpr File operator~(File& f) { return File(f ^ FILE_H); }
 
 struct Position {
 	bool flipped;
@@ -327,8 +327,9 @@ static void TTInit() {
 	tt.resize(tt_count);
 }
 
-static bool IsRepetition(U64 hash) {
-	for (int n = hash_count - 2; n >= 0; n -= 2)
+static bool IsRepetition(Position& pos, U64 hash) {
+	int limit = max(0, hash_count - pos.move50);
+	for (int n = hash_count - 4; n >= limit; n -= 2)
 		if (hash_history[n] == hash)
 			return true;
 	return false;
@@ -494,11 +495,9 @@ static Move UciToMove(string& uci, int flip) {
 
 static int PieceTypeOn(const Position& pos, const int sq) {
 	const U64 bb = 1ULL << sq;
-	for (int i = 0; i < 6; ++i) {
-		if (pos.pieces[i] & bb) {
+	for (int i = 0; i < PT_NB; ++i)
+		if (pos.pieces[i] & bb)
 			return i;
-		}
-	}
 	return PT_NB;
 }
 
@@ -575,7 +574,9 @@ static auto MakeMove(Position& pos, const Move& move) {
 	const int captured = PieceTypeOn(pos, move.to);
 	const U64 to = 1ULL << move.to;
 	const U64 from = 1ULL << move.from;
-	pos.move50 = captured != PT_NB || piece == PAWN ? 0 : pos.move50++;
+	pos.move50++;
+	if (captured != PT_NB || piece == PAWN)
+		pos.move50 = 0;
 	pos.color[0] ^= from | to;
 	pos.pieces[piece] ^= from | to;
 	if (piece == PAWN && to == pos.ep) {
@@ -758,17 +759,15 @@ static bool IsPseudolegalMove(const Position& pos, const Move& move) {
 static void PrintPv(const Position& pos, const Move move) {
 	if (!IsPseudolegalMove(pos, move))
 		return;
-	auto npos = pos;
+	Position npos = pos;
 	if (!MakeMove(npos, move))
 		return;
 	cout << " " << MoveToUci(move, pos.flipped);
 	const U64 tt_key = GetHash(npos);
 	const TT_Entry& tt_entry = tt[tt_key % tt_count];
-	//if (tt_entry.key != tt_key || tt_entry.move == Move{} || tt_entry.flag != EXACT) {
-		if (tt_entry.key != tt_key || tt_entry.flag == LOWER) {
+	if (tt_entry.key != tt_key || tt_entry.flag != EXACT)
 		return;
-	}
-	if (IsRepetition(tt_key))
+	if (IsRepetition(npos, tt_key))
 		return;
 	hash_history[hash_count++] = tt_key;
 	PrintPv(npos, tt_entry.move);
@@ -979,7 +978,7 @@ static int EvalPosition(Position& pos) {
 		FlipPosition(pos);
 		score = -score;
 	}
-	score= (Mg(score) * phase + Eg(score) * (24 - phase)) / 24;
+	score = (Mg(score) * phase + Eg(score) * (24 - phase)) / 24;
 	return (100 - pos.move50) * score / 100;
 }
 
@@ -1100,7 +1099,7 @@ static int SearchAlpha(Position& pos, int alpha, int beta, int depth, const int 
 	const U64 tt_key = GetHash(pos);
 
 	if (ply && !in_qsearch)
-		if (pos.move50 >= 100 || IsRepetition(tt_key))
+		if (pos.move50 >= 100 || IsRepetition(pos, tt_key))
 			return 0;
 
 	// TT Probing
@@ -1518,7 +1517,7 @@ static void ParseGo(Position& pos, string command) {
 }
 
 void UciCommand(Position& pos, string command) {
-	if (command == "uci"){
+	if (command == "uci") {
 		cout << "id name " << NAME << endl;
 		cout << "option name UCI_Elo type spin default " << options.eloMax << " min " << options.eloMin << " max " << options.eloMax << endl;
 		cout << "option name hash type spin default " << options.ttMb << " min 1 max 1000" << endl;
@@ -1550,7 +1549,7 @@ void UciCommand(Position& pos, string command) {
 	else if (command == "perft")UciPerformance(pos);
 	else if (command == "eval")UciEval(pos);
 	else if (command == "print")PrintBoard(pos);
-	else if (command == "stop")info.stop=true;
+	else if (command == "stop")info.stop = true;
 	else if (command == "quit")exit(0);
 }
 
