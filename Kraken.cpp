@@ -1521,40 +1521,44 @@ static void ParseGo(Position& pos, string command) {
 }
 
 void UciCommand(Position& pos, string command) {
-	if (command == "uci") {
+	if (command.empty())
+		return;
+	stringstream ss(command);
+	string token;
+	ss >> token;
+	if (token == "uci") {
 		cout << "id name " << NAME << endl;
 		cout << "option name UCI_Elo type spin default " << options.eloMax << " min " << options.eloMin << " max " << options.eloMax << endl;
 		cout << "option name hash type spin default " << options.ttMb << " min 1 max 1000" << endl;
 		cout << "uciok" << endl;
 	}
-	else if (command == "isready")cout << "readyok" << endl;
-	else if (command.substr(0, 8) == "position")
-		ParsePosition(pos, command);
-	else if (command.substr(0, 2) == "go")
-		ParseGo(pos, command);
-	else if (command == "setoption")
+	else if (token == "isready")cout << "readyok" << endl;
+	else if (token.substr(0, 8) == "position")
+		ParsePosition(pos, token);
+	else if (token.substr(0, 2) == "go")
+		ParseGo(pos, token);
+	else if (token == "setoption")
 	{
-		string word;
-		cin >> word;
-		cin >> word;
-		word = StrToLower(word);
-		if (word == "uci_elo") {
-			cin >> word;
+		cin >> token;
+		cin >> token;
+		token = StrToLower(token);
+		if (token == "uci_elo") {
+			cin >> token;
 			cin >> options.elo;
 			EvalInit();
 		}
-		else if (word == "hash") {
-			cin >> word;
+		else if (token == "hash") {
+			cin >> token;
 			cin >> options.ttMb;
 			TTInit();
 		}
 	}
-	else if (command == "bench")UciBench(pos);
-	else if (command == "perft")UciPerformance(pos);
-	else if (command == "eval")UciEval(pos);
-	else if (command == "print")PrintBoard(pos);
-	else if (command == "stop")info.stop = true;
-	else if (command == "quit")exit(0);
+	else if (token == "bench")UciBench(pos);
+	else if (token == "perft")UciPerformance(pos);
+	else if (token == "eval")UciEval(pos);
+	else if (token == "print")PrintBoard(pos);
+	else if (token == "stop")info.stop = true;
+	else if (token == "quit")exit(0);
 }
 
 static void UciLoop(Position& pos) {
