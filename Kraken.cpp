@@ -1533,10 +1533,10 @@ void UciCommand(Position& pos, string command) {
 		cout << "uciok" << endl;
 	}
 	else if (token == "isready")cout << "readyok" << endl;
-	else if (token.substr(0, 8) == "position")
-		ParsePosition(pos, token);
-	else if (token.substr(0, 2) == "go")
-		ParseGo(pos, token);
+	else if (token == "position")
+		ParsePosition(pos, command);
+	else if (token == "go")
+		ParseGo(pos, command);
 	else if (token == "setoption")
 	{
 		cin >> token;
@@ -1562,6 +1562,8 @@ void UciCommand(Position& pos, string command) {
 }
 
 static void UciLoop(Position& pos) {
+	//UciCommand(pos, "position startpos moves d2d4 d7d5 g1f3 g8f6 c2c4 c7c6 b1c3 a7a6 d1b3 e7e6 c1g5 d5c4 b3c4 b7b5 c4d3 h7h6");
+	//UciCommand(pos, "go wtime 32400 btime 30041 winc 300 binc 300");
 	string line;
 	while (true) {
 		getline(cin, line);
