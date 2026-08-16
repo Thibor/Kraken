@@ -15,7 +15,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Kraken.cpp">
+    <ClCompile Include="kraken.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
